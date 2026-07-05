@@ -130,6 +130,39 @@ Challenged and answered during the interview:
 - **Wrapper**: mcp-handley-lab `email` module (~4k LOC: notmuch read/update,
   mutt-gated send, offlineimap sync, MIME/HTML extraction) — the pre-alan MCP
   surface this programme supersedes.
+- **Hermes auth (surveyed in detail)**: TWO independent token stores for the
+  one account. offlineimap carries an inline `oauth2_refresh_token` minted by
+  an interactive MSAL flow (UvA-FNWI M365-IMAP `get_token.py`, Thunderbird's
+  public client id) and manually pasted into the config — offlineimap never
+  persists the rotated refresh tokens Microsoft issues, so the pasted token
+  rots and demands periodic re-login. msmtp separately runs `mutt_oauth2.py`
+  against its own token file, which *does* persist rotations. The fix shape
+  for interest 9: one self-rotating token store (mutt_oauth2.py or an msal
+  cache) serving both directions — `~/.offlineimap.py` already contains an
+  unused `get_oauth2_token()` helper pointing at exactly this. One Raven
+  login per genuine expiry, config not code.
+
+## Rulings (2026-07-05, post-founding, same day)
+
+- **Mail migrates to lovelace as part of this work.** The boltzmann transport
+  is ~a decade mature and is the *seed*, not the constraint: those configs are
+  built for human-driven use; the lovelace setup is agent-first and may
+  re-tool where genuinely better. The Maildir seeds by rsync from boltzmann —
+  no overnight re-download, no rate-limit exposure for the archive.
+- **Sync cadence**: a proper systemd unit, effectively continuous — hourly is
+  not enough, and Will will never look at this box's mail directly. Respect
+  the university's M365 IMAP rate limiting (historically: initial sync =
+  overnight, `offlineimap -o1` single-threaded; the full-folder sweep is
+  painfully slow). Optimising the sync setup is explicitly valuable.
+- **Alan's own address is decided**, not exploratory (alan-work#13) — folded
+  into this programme.
+- **Don't overfit on the existing agentic machinery.** The cockpit is alpha;
+  the morning brief has never actually been used; alan-*/mdcal/mddb patterns
+  are days old and not precedent-setting — where a better shape exists, take
+  it. The interests in this document are the fixed points, not the code.
+- **Code philosophy, binding across every repo this touches**: lean code, no
+  defensive programming, the fewest elegant lines that implement the
+  interests — optimised for future agents reasoning over it.
 
 ## Scope
 
@@ -142,7 +175,7 @@ Challenged and answered during the interview:
 | Alan's own address + secretary policy | alan-work |
 | M365/Raven auth streamlining | alan-work issue; config is ops |
 | outbound iMIP calendar invites (consume the send gate) | mdcal (#8) |
-| IMAP/storage/search/transport | existing stack — not rebuilt |
+| IMAP/storage/search/transport | existing stack, migrated to lovelace; re-tooling allowed where genuinely better (see Rulings) |
 
 ## Non-goals
 
