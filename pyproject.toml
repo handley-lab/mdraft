@@ -1,0 +1,51 @@
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mdraft"
+version = "0.0.1"
+description = "Email drafting and gated sending over the mddb card substrate"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    {name = "Handley Research Group", email = "wh260@cam.ac.uk"}
+]
+keywords = ["email", "drafting", "agents", "yaml", "markdown", "mddb"]
+dependencies = ["mddb"]
+classifiers = [
+    "Development Status :: 1 - Planning",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Email",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "ruff>=0.5"]
+
+[project.urls]
+Homepage = "https://github.com/handley-lab/mdraft"
+Repository = "https://github.com/handley-lab/mdraft"
+Issues = "https://github.com/handley-lab/mdraft/issues"
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+
+[tool.ruff.lint]
+extend-select = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.per-file-ignores]
+"src/mdraft/_*.py" = ["D"]
+"tests/*" = ["D"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
