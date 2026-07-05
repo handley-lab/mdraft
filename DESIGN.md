@@ -133,14 +133,18 @@ Challenged and answered during the interview:
 - **Hermes auth (surveyed in detail)**: TWO independent token stores for the
   one account. offlineimap carries an inline `oauth2_refresh_token` minted by
   an interactive MSAL flow (UvA-FNWI M365-IMAP `get_token.py`, Thunderbird's
-  public client id) and manually pasted into the config — offlineimap never
-  persists the rotated refresh tokens Microsoft issues, so the pasted token
-  rots and demands periodic re-login. msmtp separately runs `mutt_oauth2.py`
-  against its own token file, which *does* persist rotations. The fix shape
-  for interest 9: one self-rotating token store (mutt_oauth2.py or an msal
-  cache) serving both directions — `~/.offlineimap.py` already contains an
-  unused `get_oauth2_token()` helper pointing at exactly this. One Raven
-  login per genuine expiry, config not code.
+  public client id) and manually pasted into the config. Verified against
+  Microsoft's docs: Entra refresh tokens live 90 days, and every redemption
+  returns a *replacement* token carrying a fresh 90-day window — so a client
+  that persists replacements rolls forever, while offlineimap's static pasted
+  token burns its fixed 90-day fuse even under constant use. That is the
+  re-login cadence. msmtp separately runs `mutt_oauth2.py` against its own
+  token file, which *does* persist replacements. The fix shape for interest
+  9: one self-rotating token store (mutt_oauth2.py or an msal cache) serving
+  both directions — offlineimap.conf documents `oauth2_access_token_eval` /
+  `oauth2_refresh_token_eval` pythonfile hooks for exactly this, and
+  `~/.offlineimap.py` already contains an unused `get_oauth2_token()` helper.
+  One Raven login per genuine expiry, config not code.
 
 ## Rulings (2026-07-05, post-founding, same day)
 
