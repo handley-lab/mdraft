@@ -134,6 +134,7 @@ def flush(deck, card_id, sha, msmtp=("msmtp",)):
     subprocess.run(
         [*msmtp, "-a", sender, "-t"],
         input=bytes(msg),
+        stderr=subprocess.PIPE,
         check=True,
     )
     stamp = {
