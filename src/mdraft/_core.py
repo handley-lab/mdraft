@@ -30,6 +30,9 @@ constructs the calls; compose() raises KeyError on missing required keys):
   sent_mid / sent_sha / sent_at   stamped by flush() and only meaningful when
                          flush stamped them
 
+bcc is deliberately absent from v1: envelope-vs-header semantics with
+``msmtp -t`` are a trap, deferred until actually needed.
+
 Body = the exact plain-text email body. Sent mail is never copied into cards:
 notmuch holds the product, sent_mid references it.
 """
