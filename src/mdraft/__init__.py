@@ -1,6 +1,12 @@
 """Email drafting and gated sending over the mddb card substrate.
 
-Design phase — see DESIGN.md for the founding interests.
+Draft cards hold the process (proposals, edits, steers); notmuch holds the
+product (sent mail, referenced by Message-ID, never copied). See DESIGN.md
+for the founding interests and CLAUDE.md for the working rules — above all
+the never-event: no agent-reachable path may flush the outbox.
 """
 
-__version__ = "0.0.1"
+from mdraft._core import ENVELOPE_DOC, AlreadySent, at, compose, flush
+
+__version__ = "0.1.0"
+__all__ = ["ENVELOPE_DOC", "AlreadySent", "at", "compose", "flush"]
