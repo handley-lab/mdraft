@@ -1,8 +1,8 @@
-# mdraft — founding design record
+# mddraft — founding design record
 
 Interests elicited by interview with Will, 2026-07-05. This document records the
 full context of the "bring email into the alan system" programme — wider than
-mdraft itself — so the interests survive as a unit. The scope table below says
+mddraft itself — so the interests survive as a unit. The scope table below says
 which repo owns which part.
 
 ## The one principle
@@ -10,11 +10,11 @@ which repo owns which part.
 **Store the process, reference the product.**
 
 The mail store (notmuch over Maildir) already holds every message ever sent or
-received, addressable by Message-ID. mdraft never copies it. What the mailbox
+received, addressable by Message-ID. mddraft never copies it. What the mailbox
 structurally cannot hold is the *trajectory*: the agent's proposed draft, the
 owner's edits, the spoken steers ("too formal", "don't chase him yet"), the
 abandoned versions. None of those ever become mail, so none have a Message-ID —
-they exist only if something else records them. mdraft is that something: a
+they exist only if something else records them. mddraft is that something: a
 deck of draft cards where edits are commits, so the drafting process is
 captured for free by the substrate, and finished artifacts are referenced by
 MID rather than duplicated.
@@ -91,11 +91,11 @@ MID rather than duplicated.
    cached until the next genuine expiry. Survey the current flow before
    changing it.
 
-10. **Modular placement.** No monolith. mdraft is a thin layer over mddb,
+10. **Modular placement.** No monolith. mddraft is a thin layer over mddb,
     parallel to mdcal/mdgtd. Workflow (triage, digest, brief) is agents
     composing the substrate — alan-work's business, not module code. The
     transport underneath (offlineimap → notmuch → msmtp) already works and is
-    already de-Googled; mdraft does not reimplement it.
+    already de-Googled; mddraft does not reimplement it.
 
 ## Why MIDs alone are not sufficient (the argument for the deck)
 
@@ -135,7 +135,7 @@ Challenged and answered during the interview:
 
 | concern | home |
 |---|---|
-| draft cards, learning ledger, capability-separated send gate | **mdraft** (this repo) |
+| draft cards, learning ledger, capability-separated send gate | **mddraft** (this repo) |
 | verbatim approval surface (PWA) | alan-work (via alan-pwa) |
 | inbound triage agent: continuous sync, interrupt tier, digest, brief feed | alan-work |
 | notmuch tagging substrate | alan-work issue; config is ops |
@@ -153,6 +153,6 @@ Challenged and answered during the interview:
 
 ## Naming
 
-`mdraft`: the repo's entire card content is markdown drafts, so the `md*`
+`mddraft`: the repo's entire card content is markdown drafts, so the `md*`
 family prefix is earned, not cosmetic. PyPI name claimed 2026-07-05 alongside
 mddb and mdcal (both Handley Research Group).

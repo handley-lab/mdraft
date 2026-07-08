@@ -3,7 +3,7 @@ requires = ["setuptools>=77.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mdraft"
+name = "mddraft"
 version = "0.0.1"
 description = "Email drafting and gated sending over the mddb card substrate"
 readme = "README.md"
@@ -29,9 +29,9 @@ classifiers = [
 dev = ["pytest>=8.0", "ruff>=0.5"]
 
 [project.urls]
-Homepage = "https://github.com/handley-lab/mdraft"
-Repository = "https://github.com/handley-lab/mdraft"
-Issues = "https://github.com/handley-lab/mdraft/issues"
+Homepage = "https://github.com/handley-lab/mddraft"
+Repository = "https://github.com/handley-lab/mddraft"
+Issues = "https://github.com/handley-lab/mddraft/issues"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
@@ -44,7 +44,7 @@ extend-select = ["D"]
 convention = "google"
 
 [tool.ruff.lint.per-file-ignores]
-"src/mdraft/_*.py" = ["D"]
+"src/mddraft/_*.py" = ["D"]
 "tests/*" = ["D"]
 
 [tool.setuptools.packages.find]
