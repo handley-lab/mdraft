@@ -1,4 +1,4 @@
-# mdraft
+# mddraft
 
 Email drafting and gated sending over the [mddb](https://github.com/handley-lab/mddb)
 card substrate — the outbound half of bringing email into an agentic system.
