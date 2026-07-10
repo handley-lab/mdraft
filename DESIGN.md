@@ -130,6 +130,62 @@ Challenged and answered during the interview:
 - **Wrapper**: mcp-handley-lab `email` module (~4k LOC: notmuch read/update,
   mutt-gated send, offlineimap sync, MIME/HTML extraction) — the pre-alan MCP
   surface this programme supersedes.
+- **Hermes auth (surveyed in detail)**: TWO independent token stores for the
+  one account. offlineimap carries an inline `oauth2_refresh_token` minted by
+  an interactive MSAL flow (UvA-FNWI M365-IMAP `get_token.py`, Thunderbird's
+  public client id) and manually pasted into the config. Verified against
+  Microsoft's docs: Entra refresh tokens live 90 days, and every redemption
+  returns a *replacement* token carrying a fresh 90-day window — so a client
+  that persists replacements rolls forever, while offlineimap's static pasted
+  token burns its fixed 90-day fuse even under constant use. That is the
+  re-login cadence. msmtp separately runs `mutt_oauth2.py` against its own
+  token file, which *does* persist replacements. The fix shape for interest
+  9: one self-rotating token store (mutt_oauth2.py or an msal cache) serving
+  both directions — offlineimap.conf documents `oauth2_access_token_eval` /
+  `oauth2_refresh_token_eval` pythonfile hooks for exactly this, and
+  `~/.offlineimap.py` already contains an unused `get_oauth2_token()` helper.
+  One Raven login per genuine expiry, config not code.
+
+## Rulings (2026-07-06, second day)
+
+- **Total gating.** ALL outbound mail gates through Will — even mail from an
+  agent's own account. No agent-reachable send credential exists for any
+  identity. This deletes the "secretary norms" policy layer entirely: no
+  important-vs-routine recipient classification, no per-identity allowlists.
+  One invariant, uniformly enforced; the approval friction is itself the rate
+  limiter — the right amount of agent mail gets sent because sending costs
+  Will's attention.
+- **Agent addresses are service identity, not correspondence.**
+  `<agent-name>@alan2.ai` (assumed domain) exists so agents can hold accounts
+  on GitHub and similar — enabling agent-authored pull requests — with the
+  mailbox receiving signup confirmations, notifications, CI mail. Agent-sent
+  human correspondence, especially cold, is an **anti-pattern**: people feel
+  funny receiving mail from a secretary. In-context exceptions (a send during
+  a meeting) are fine but are not a use case to design for. Provisioning is
+  phase two; the substrate is shaped so each new address is one sync stanza +
+  one credential + one msmtp account.
+
+## Rulings (2026-07-05, post-founding, same day)
+
+- **Mail migrates to lovelace as part of this work.** The boltzmann transport
+  is ~a decade mature and is the *seed*, not the constraint: those configs are
+  built for human-driven use; the lovelace setup is agent-first and may
+  re-tool where genuinely better. The Maildir seeds by rsync from boltzmann —
+  no overnight re-download, no rate-limit exposure for the archive.
+- **Sync cadence**: a proper systemd unit, effectively continuous — hourly is
+  not enough, and Will will never look at this box's mail directly. Respect
+  the university's M365 IMAP rate limiting (historically: initial sync =
+  overnight, `offlineimap -o1` single-threaded; the full-folder sweep is
+  painfully slow). Optimising the sync setup is explicitly valuable.
+- **Alan's own address is decided**, not exploratory (alan-work#13) — folded
+  into this programme.
+- **Don't overfit on the existing agentic machinery.** The cockpit is alpha;
+  the morning brief has never actually been used; alan-*/mdcal/mddb patterns
+  are days old and not precedent-setting — where a better shape exists, take
+  it. The interests in this document are the fixed points, not the code.
+- **Code philosophy, binding across every repo this touches**: lean code, no
+  defensive programming, the fewest elegant lines that implement the
+  interests — optimised for future agents reasoning over it.
 
 ## Scope
 
@@ -142,7 +198,7 @@ Challenged and answered during the interview:
 | Alan's own address + secretary policy | alan-work |
 | M365/Raven auth streamlining | alan-work issue; config is ops |
 | outbound iMIP calendar invites (consume the send gate) | mdcal (#8) |
-| IMAP/storage/search/transport | existing stack — not rebuilt |
+| IMAP/storage/search/transport | existing stack, migrated to lovelace; re-tooling allowed where genuinely better (see Rulings) |
 
 ## Non-goals
 
