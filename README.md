@@ -14,6 +14,23 @@ The same deck is the learning corpus: the proposal→final diff and the steers
 that produced it are exactly the data a mailbox throws away. Sent mail is never
 duplicated — cards reference the mail store (notmuch) by Message-ID.
 
+## Library
+
+Four names over [mddb](https://github.com/handley-lab/mddb), stdlib otherwise:
+
+- `ENVELOPE_DOC` — the draft-card envelope convention (documented, never
+  validated).
+- `at(deck, card_id, sha)` — a card's content as it existed at a commit; the
+  approval display and the flush share this one immutable read.
+- `compose(card, mid="")` — draft card → `email.message.EmailMessage`.
+- `flush(deck, card_id, sha, msmtp=("msmtp",))` — send the bytes at `sha`
+  (msmtp invoked exactly once) and stamp `sent_mid`/`sent_sha`/`sent_at`.
+
+The gate — who may call `flush`, as which user, behind which token — is
+tenancy wiring, deliberately not in this library.
+
 ## Status
 
-Design — see `DESIGN.md` for the founding interests and scope.
+Library core built; the gate, approval PWA, and mail substrate land in the
+tenancy repos. See `DESIGN.md` for the founding interests and `CLAUDE.md` for
+the working rules.
