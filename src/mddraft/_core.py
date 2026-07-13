@@ -8,9 +8,11 @@ is tenancy wiring, deliberately outside this library.
 """
 
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from email.utils import make_msgid
+from email.policy import SMTP
+from email.utils import formataddr, make_msgid
 
 import mddb
 
@@ -72,7 +74,7 @@ def at(deck, card_id, sha):
     return mddb.Card.from_text(text)
 
 
-def compose(card, mid=""):
+def compose(card, mid="", realname=""):
     """Compose a draft card into an RFC822 message.
 
     Pure and deterministic: no I/O, no clock, no defaults invented — the
@@ -83,12 +85,15 @@ def compose(card, mid=""):
     Args:
         card: A draft card following ENVELOPE_DOC.
         mid: Message-ID to stamp, when the message is actually being sent.
+        realname: Display name for the From header; empty emits the bare
+            envelope address.
 
     Returns:
         An email.message.EmailMessage ready for msmtp -t.
     """
     msg = EmailMessage()
-    msg["From"] = card.yaml["from"]
+    sender = card.yaml["from"]
+    msg["From"] = formataddr((realname, sender)) if realname else sender
     msg["To"] = ", ".join(card.yaml["to"])
     if "cc" in card.yaml:
         msg["Cc"] = ", ".join(card.yaml["cc"])
@@ -103,27 +108,100 @@ def compose(card, mid=""):
     return msg
 
 
-def flush(deck, card_id, sha, msmtp=("msmtp",)):
+def _sign(msg, sign_key):
+    """Emit ``msg`` as RFC 3156 multipart/signed bytes, signing with gpg.
+
+    The text part is serialised exactly once (SMTP policy, CRLF); those
+    bytes are both what gpg signs and what lands verbatim as the first
+    part of the framed message — the signature is a function of the
+    transmitted bytes, never a re-serialisation of them. The digest is
+    pinned to SHA256 so the ``micalg`` parameter is truthful.
+
+    Args:
+        msg: The composed message (flat text/plain with envelope headers).
+        sign_key: gpg key selector passed to ``-u``; the keyring comes
+            from ``GNUPGHOME`` in the environment.
+
+    Returns:
+        The complete multipart/signed message as bytes, ready for msmtp.
+
+    Raises:
+        subprocess.CalledProcessError: gpg exited nonzero; nothing was
+            signed and nothing must be sent.
+    """
+    part = EmailMessage(policy=SMTP)
+    part.set_content(msg.get_content())
+    del part["MIME-Version"]
+    part_bytes = bytes(part)
+    signature = subprocess.run(
+        [
+            "gpg",
+            "--batch",
+            "--armor",
+            "--detach-sign",
+            "--digest-algo",
+            "SHA256",
+            "-u",
+            sign_key,
+        ],
+        input=part_bytes,
+        capture_output=True,
+        check=True,
+    ).stdout
+    boundary = uuid.uuid4().hex
+    outer = EmailMessage(policy=SMTP)
+    for name, value in msg.items():
+        if name.lower() not in (
+            "content-type",
+            "content-transfer-encoding",
+            "mime-version",
+        ):
+            outer[name] = value
+    outer["MIME-Version"] = "1.0"
+    outer["Content-Type"] = (
+        f'multipart/signed; micalg="pgp-sha256"; '
+        f'protocol="application/pgp-signature"; boundary="{boundary}"'
+    )
+    outer.set_payload("")
+    return bytes(outer) + b"".join(
+        [
+            b"--" + boundary.encode() + b"\r\n",
+            part_bytes,
+            b"\r\n--" + boundary.encode() + b"\r\n",
+            b'Content-Type: application/pgp-signature; name="signature.asc"\r\n',
+            b"\r\n",
+            signature,
+            b"\r\n--" + boundary.encode() + b"--\r\n",
+        ]
+    )
+
+
+def flush(deck, card_id, sha, msmtp=("msmtp",), *, realname="", sign_key=""):
     """Send the card's bytes at ``sha`` and stamp the send on the deck.
 
     msmtp is invoked exactly once per call. The ConflictError retry wraps
     ONLY the stamp commit, reusing the already-generated Message-ID — a
     concurrent deck commit can never cause a second send. A nonzero msmtp
-    exit propagates before anything is committed.
+    exit propagates before anything is committed, and a nonzero gpg exit
+    propagates before msmtp is even invoked.
 
     Args:
         deck: Path to the outbox deck.
         card_id: The card to send.
         sha: The commit Will read verbatim; its bytes go to the wire.
         msmtp: The msmtp argv prefix (tests substitute a capture script).
+        realname: Display name for the From header, forwarded to compose.
+        sign_key: When non-empty, the message leaves as RFC 3156
+            multipart/signed, detach-signed by this gpg key (see _sign);
+            empty sends unsigned, byte-identical to the pre-signing path.
 
     Returns:
         The Message-ID of the sent mail (notmuch holds the product).
 
     Raises:
         AlreadySent: The card at HEAD already carries a sent_mid.
-        subprocess.CalledProcessError: msmtp exited nonzero; nothing was
-            committed and the card is still a draft.
+        subprocess.CalledProcessError: gpg or msmtp exited nonzero;
+            nothing was committed and the card is still a draft.
     """
     db = mddb.MDDB(deck)
     head_yaml = db.read(card_id).yaml
@@ -132,11 +210,12 @@ def flush(deck, card_id, sha, msmtp=("msmtp",)):
     card = at(deck, card_id, sha)
     sender = card.yaml["from"]
     mid = make_msgid(domain=sender.split("@")[1])
-    msg = compose(card, mid)
+    msg = compose(card, mid, realname=realname)
     msg["Date"] = datetime.now(timezone.utc)
+    payload = _sign(msg, sign_key) if sign_key else bytes(msg)
     subprocess.run(
         [*msmtp, "-a", sender, "-t"],
-        input=bytes(msg),
+        input=payload,
         stderr=subprocess.PIPE,
         check=True,
     )
