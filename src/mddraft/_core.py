@@ -115,7 +115,9 @@ def _sign(msg, sign_key):
     bytes are both what gpg signs and what lands verbatim as the first
     part of the framed message — the signature is a function of the
     transmitted bytes, never a re-serialisation of them. The digest is
-    pinned to SHA256 so the ``micalg`` parameter is truthful.
+    pinned to SHA256 so the ``micalg`` parameter is truthful. gpg emits
+    LF-ended armor, which is normalised to CRLF so the framed message is
+    uniformly SMTP-canonical.
 
     Args:
         msg: The composed message (flat text/plain with envelope headers).
@@ -148,6 +150,7 @@ def _sign(msg, sign_key):
         capture_output=True,
         check=True,
     ).stdout
+    signature = signature.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
     boundary = uuid.uuid4().hex
     outer = EmailMessage(policy=SMTP)
     for name, value in msg.items():

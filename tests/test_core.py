@@ -222,6 +222,7 @@ def test_flush_signed_roundtrip(deck, fake_msmtp, sign_key, tmp_path):
     script, log = fake_msmtp
     mddraft.flush(db.root, card_id, db.head(), msmtp=(str(script),), sign_key=sign_key)
     wire = wire_message(log)
+    assert b"\n" not in wire.replace(b"\r\n", b"")
     parsed = message_from_bytes(wire, policy=default_policy)
     assert parsed.get_content_type() == "multipart/signed"
     assert parsed.get_param("micalg") == "pgp-sha256"
