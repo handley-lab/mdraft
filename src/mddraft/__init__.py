@@ -7,6 +7,15 @@ the never-event: no agent-reachable path may flush the outbox.
 """
 
 from mddraft._core import ENVELOPE_DOC, AlreadySent, at, compose, flush
+from mddraft._correspondence import forward, reply
 
 __version__ = "0.0.2"
-__all__ = ["ENVELOPE_DOC", "AlreadySent", "at", "compose", "flush"]
+__all__ = [
+    "ENVELOPE_DOC",
+    "AlreadySent",
+    "at",
+    "compose",
+    "flush",
+    "forward",
+    "reply",
+]
