@@ -9,6 +9,7 @@ is tenancy wiring, deliberately outside this library.
 
 import subprocess
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.parser import BytesParser
@@ -158,10 +159,16 @@ def compose(card, mid="", attachment_data=(), realname=""):
 
 
 def _sign(msg, sign_key):
-    part = EmailMessage(policy=SMTP)
-    part.set_content(msg.get_content())
-    del part["MIME-Version"]
-    part_bytes = bytes(part)
+    part = deepcopy(msg)
+    for name in list(part.keys()):
+        if name.lower() not in (
+            "content-type",
+            "content-transfer-encoding",
+            "content-disposition",
+            "mime-version",
+        ):
+            del part[name]
+    part_bytes = part.as_bytes(policy=SMTP)
     signature = subprocess.run(
         [
             "gpg",
@@ -199,6 +206,7 @@ def _sign(msg, sign_key):
             part_bytes,
             b"\r\n--" + boundary.encode() + b"\r\n",
             b'Content-Type: application/pgp-signature; name="signature.asc"\r\n',
+            b'Content-Disposition: attachment; filename="signature.asc"\r\n',
             b"\r\n",
             signature,
             b"\r\n--" + boundary.encode() + b"--\r\n",

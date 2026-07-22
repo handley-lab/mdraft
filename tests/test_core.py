@@ -1,6 +1,8 @@
 import subprocess
+from email import message_from_bytes
 from email.message import EmailMessage
 from email.policy import SMTP
+from email.policy import default as default_policy
 
 import mddb
 import pytest
@@ -44,6 +46,61 @@ def fake_msmtp(tmp_path):
     return script, log
 
 
+@pytest.fixture
+def sign_key(tmp_path, monkeypatch):
+    home = tmp_path / "gnupg"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("GNUPGHOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "false")
+    subprocess.run(
+        [
+            "gpg",
+            "--batch",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "",
+            "--quick-gen-key",
+            "gate test <gate@test.invalid>",
+            "ed25519",
+            "sign",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    listing = subprocess.run(
+        ["gpg", "--batch", "--with-colons", "--list-secret-keys"],
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout
+    return next(
+        line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr")
+    )
+
+
+def wire_message(log):
+    raw = log.read_bytes()
+    return raw[raw.index(b"\n") + 1 :]
+
+
+def verify_signed(wire, tmp_path):
+    parsed = message_from_bytes(wire, policy=default_policy)
+    body, signature = parsed.iter_parts()
+    boundary = ("--" + parsed.get_boundary()).encode()
+    raw_body = wire.split(boundary + b"\r\n", 1)[1].split(boundary, 1)[0][:-2]
+    (tmp_path / "signed-part").write_bytes(raw_body)
+    (tmp_path / "signature.asc").write_bytes(signature.get_content())
+    subprocess.run(
+        ["gpg", "--verify", tmp_path / "signature.asc", tmp_path / "signed-part"],
+        capture_output=True,
+        check=True,
+    )
+    return body
+
+
 def test_compose_full_envelope(deck):
     db, card_id = deck
     msg = mddraft.compose(db.read(card_id), mid="<mid@cam.ac.uk>")
@@ -85,6 +142,121 @@ def test_flush_stamps_date_on_the_wire(deck, fake_msmtp):
     script, log = fake_msmtp
     mddraft.flush(db.root, card_id, db.head(), msmtp=(str(script),))
     assert "Date: " in log.read_text()
+
+
+def test_signed_plain_body_verifies_and_keeps_envelope_outside_signature(
+    deck, fake_msmtp, sign_key, tmp_path
+):
+    db, card_id = deck
+    script, log = fake_msmtp
+    mddraft.flush(
+        db.root,
+        card_id,
+        db.head(),
+        msmtp=(str(script),),
+        realname="Will Handley",
+        sign_key=sign_key,
+    )
+    wire = wire_message(log)
+    parsed = message_from_bytes(wire, policy=default_policy)
+    assert parsed["From"] == "Will Handley <wh260@cam.ac.uk>"
+    assert parsed.get_content_type() == "multipart/signed"
+    body = verify_signed(wire, tmp_path)
+    assert body.get_content_type() == "text/plain"
+    assert body.get_content().replace("\r\n", "\n") == (
+        "Dear Smith,\n\nI must decline.\n\nWill\n"
+    )
+    assert "From" not in body
+
+
+def test_signed_attachment_body_verifies_and_retains_exact_file(
+    tmp_path, fake_msmtp, sign_key
+):
+    db, card_id = attachment_deck(
+        tmp_path,
+        [
+            (
+                {
+                    "filename": "result.dat",
+                    "content_type": "application/octet-stream",
+                    "representation": "payload",
+                },
+                b"attachment bytes",
+            )
+        ],
+    )
+    script, log = fake_msmtp
+    mddraft.flush(
+        db.root, card_id, db.head(), msmtp=(str(script),), sign_key=sign_key
+    )
+    body = verify_signed(wire_message(log), tmp_path)
+    attachment = next(body.iter_attachments())
+    assert attachment.get_filename() == "result.dat"
+    assert attachment.get_payload(decode=True) == b"attachment bytes"
+
+
+def test_signed_utf8_message_and_entity_attachments_verify(
+    tmp_path, fake_msmtp, sign_key
+):
+    embedded = EmailMessage(policy=SMTP)
+    embedded["From"] = "josé@example.org"
+    embedded.set_content("pièce jointe\n")
+    entity = EmailMessage(policy=SMTP)
+    entity.make_related()
+    html = EmailMessage(policy=SMTP)
+    html.set_content("<p>déjà vu</p>", subtype="html")
+    entity.attach(html)
+    db, card_id = attachment_deck(
+        tmp_path,
+        [
+            (
+                {
+                    "filename": "forwarded.eml",
+                    "content_type": "message/rfc822",
+                    "representation": "message",
+                },
+                embedded.as_bytes(policy=SMTP),
+            ),
+            (
+                {
+                    "content_type": "multipart/related",
+                    "representation": "entity",
+                },
+                entity.as_bytes(policy=SMTP),
+            ),
+        ],
+    )
+    card = db.read(card_id)
+    card.body = "Chère collègue — merci.\n"
+    with db.editor(rationale="utf-8 signed body") as editor:
+        editor.update(card, summary=card.summary)
+    script, log = fake_msmtp
+    mddraft.flush(
+        db.root, card_id, db.head(), msmtp=(str(script),), sign_key=sign_key
+    )
+    body = verify_signed(wire_message(log), tmp_path)
+    assert body.get_body().get_content().replace("\r\n", "\n") == (
+        "Chère collègue — merci.\n"
+    )
+    message_part, entity_part = body.iter_attachments()
+    assert message_part.get_payload(0)["From"] == "josé@example.org"
+    assert entity_part.get_content_type() == "multipart/related"
+
+
+def test_gpg_failure_sends_and_commits_nothing(deck, fake_msmtp):
+    db, card_id = deck
+    script, log = fake_msmtp
+    sha = db.head()
+    with pytest.raises(subprocess.CalledProcessError):
+        mddraft.flush(
+            db.root,
+            card_id,
+            sha,
+            msmtp=(str(script),),
+            sign_key="NO-SUCH-KEY",
+        )
+    assert not log.exists()
+    assert mddb.MDDB(db.root).head() == sha
 
 
 def test_compose_missing_envelope_raises_keyerror():
