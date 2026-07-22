@@ -1,4 +1,6 @@
 import subprocess
+from email.message import EmailMessage
+from email.policy import SMTP
 
 import mddb
 import pytest
@@ -88,6 +90,127 @@ def test_flush_stamps_date_on_the_wire(deck, fake_msmtp):
 def test_compose_missing_envelope_raises_keyerror():
     with pytest.raises(KeyError):
         mddraft.compose(mddb.Card(yaml={"to": ["a@example.org"]}, body="hi"))
+
+
+def test_scalar_references_fail_before_msmtp(tmp_path, fake_msmtp):
+    db = mddb.MDDB.init(tmp_path / "scalar-references")
+    with db.editor(rationale="malformed legacy draft") as editor:
+        card = editor.create(
+            title="bad references",
+            summary="must not send",
+            yaml={
+                "to": ["a@example.org"],
+                "from": "me@example.org",
+                "subject": "bad references",
+                "references": "<root@example.org>",
+            },
+            body="body\n",
+        )
+    script, log = fake_msmtp
+    with pytest.raises(TypeError, match="references must be a list"):
+        mddraft.flush(db.root, card.id, db.head(), msmtp=(str(script),))
+    assert not log.exists()
+
+
+def attachment_deck(tmp_path, attachment_rows):
+    db = mddb.MDDB.init(tmp_path / "attachments")
+    with db.editor(rationale="draft with attachments") as editor:
+        ids = []
+        for number, (yaml, data) in enumerate(attachment_rows):
+            attachment = editor.create(
+                title=yaml.get("filename") or f"attachment {number}",
+                summary=yaml["content_type"],
+                yaml={"kind": "attachment", **yaml},
+                relpath=f"attachments/{number}.md",
+                blob=data,
+                blob_ext=".bin",
+            )
+            ids.append(attachment.id)
+        draft = editor.create(
+            title="message with files",
+            summary="attachment test",
+            yaml={
+                "to": ["a@example.org"],
+                "from": "me@example.org",
+                "subject": "files",
+                "attachments": ids,
+            },
+            body="See attached.\n",
+        )
+    return db, draft.id
+
+
+def test_payload_attachment_roundtrips_from_pinned_commit(tmp_path):
+    db, card_id = attachment_deck(
+        tmp_path,
+        [
+            (
+                {
+                    "filename": "archive.tar.gz",
+                    "content_type": "application/octet-stream",
+                    "representation": "payload",
+                },
+                b"original bytes",
+            )
+        ],
+    )
+    sha = db.head()
+    card = mddraft.at(db.root, card_id, sha)
+    selected = mddraft.attachments(db.root, card, sha)
+    attachment = db.read(card.yaml["attachments"][0])
+    attachment.blob.write_bytes(b"changed after approval")
+    part = next(mddraft.compose(card, attachment_data=selected).iter_attachments())
+    assert part.get_filename() == "archive.tar.gz"
+    assert part.get_content_type() == "application/octet-stream"
+    assert part.get_payload(decode=True) == b"original bytes"
+
+
+def test_message_and_multipart_entity_attachments_roundtrip(tmp_path):
+    embedded = EmailMessage(policy=SMTP)
+    embedded["From"] = "source@example.org"
+    embedded["To"] = "target@example.org"
+    embedded.set_content("embedded body\n")
+    entity = EmailMessage(policy=SMTP)
+    entity.make_related()
+    html = EmailMessage(policy=SMTP)
+    html.set_content("<p>body</p>", subtype="html")
+    image = EmailMessage(policy=SMTP)
+    image.set_content(b"png", maintype="image", subtype="png", disposition="inline")
+    entity.attach(html)
+    entity.attach(image)
+    db, card_id = attachment_deck(
+        tmp_path,
+        [
+            (
+                {
+                    "filename": "forwarded.eml",
+                    "content_type": "message/rfc822",
+                    "representation": "message",
+                },
+                bytes(embedded),
+            ),
+            (
+                {
+                    "content_type": "multipart/related",
+                    "representation": "entity",
+                },
+                bytes(entity),
+            ),
+        ],
+    )
+    card = mddraft.at(db.root, card_id, db.head())
+    msg = mddraft.compose(
+        card, attachment_data=mddraft.attachments(db.root, card, db.head())
+    )
+    message_part, entity_part = msg.iter_attachments()
+    assert message_part.get_content_type() == "message/rfc822"
+    assert message_part.get_filename() == "forwarded.eml"
+    assert message_part.get_payload(0)["From"] == "source@example.org"
+    assert entity_part.get_content_type() == "multipart/related"
+    assert [part.get_content_type() for part in entity_part.iter_parts()] == [
+        "text/html",
+        "image/png",
+    ]
 
 
 def test_at_reads_sha_pinned_bytes(deck):

@@ -8,9 +8,13 @@ is tenancy wiring, deliberately outside this library.
 """
 
 import subprocess
+import uuid
 from datetime import datetime, timezone
 from email.message import EmailMessage
-from email.utils import make_msgid
+from email.parser import BytesParser
+from email.policy import SMTP
+from email.utils import formataddr, make_msgid
+from pathlib import Path
 
 import mddb
 
@@ -25,6 +29,7 @@ constructs the calls; compose() raises KeyError on missing required keys):
   subject: <text>        required
   in_reply_to: "<mid>"   optional; threading
   references: ["<mid>", ...]   optional; threading
+  attachments: [card-id, ...]  optional; ordered immutable attachment cards
   state: draft | abandoned     workflow convention; inert data — nothing
                          triggers on it (approval is an act, not a field)
   sent_mid / sent_sha / sent_at   stamped by flush() and only meaningful when
@@ -42,13 +47,33 @@ class AlreadySent(RuntimeError):
     """The card already carries a sent_mid — flushing again would resend."""
 
 
+def _at(deck, card_id, sha):
+    paths = subprocess.run(
+        ["git", "-C", str(deck), "ls-tree", "-r", "-z", "--name-only", sha],
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout.split("\0")
+    for relpath in paths:
+        if not relpath.endswith(".md"):
+            continue
+        text = subprocess.run(
+            ["git", "-C", str(deck), "show", f"{sha}:{relpath}"],
+            capture_output=True,
+            check=True,
+            text=True,
+        ).stdout
+        card = mddb.Card.from_text(text)
+        if card.id == card_id:
+            return card, relpath
+    raise KeyError(card_id)
+
+
 def at(deck, card_id, sha):
     """Read a card's content as it existed at a commit.
 
-    Resolves ``card_id`` to its relpath in the CURRENT deck index, then reads
-    that relpath at ``sha`` via ``git show``. Deliberately does not scan
-    historical trees: if the card was moved between display and send, git
-    fails visibly and the caller re-reads.
+    Resolves ``card_id`` inside the pinned tree, so a later move or deletion
+    cannot change the object approved at ``sha``.
 
     Args:
         deck: Path to the (trusted) mddb deck.
@@ -59,20 +84,24 @@ def at(deck, card_id, sha):
         The Card parsed from the bytes at ``sha`` — immutable with respect to
         any later working-tree or HEAD change.
     """
-    db = mddb.MDDB(deck)
-    ((relpath,),) = db.conn.execute(
-        "SELECT relpath FROM entries WHERE id = ?", (card_id,)
-    )
-    text = subprocess.run(
-        ["git", "-C", str(deck), "show", f"{sha}:{relpath}"],
-        capture_output=True,
-        check=True,
-        text=True,
-    ).stdout
-    return mddb.Card.from_text(text)
+    return _at(deck, card_id, sha)[0]
 
 
-def compose(card, mid=""):
+def attachments(deck, card, sha):
+    """Return ordered ``(attachment card, pinned bytes)`` pairs."""
+    result = []
+    for card_id in card.yaml.get("attachments", []):
+        attachment, relpath = _at(deck, card_id, sha)
+        data = subprocess.run(
+            ["git", "-C", str(deck), "show", f"{sha}:{Path(relpath).with_suffix('.bin')}"],
+            capture_output=True,
+            check=True,
+        ).stdout
+        result.append((attachment, data))
+    return result
+
+
+def compose(card, mid="", attachment_data=(), realname=""):
     """Compose a draft card into an RFC822 message.
 
     Pure and deterministic: no I/O, no clock, no defaults invented — the
@@ -88,7 +117,8 @@ def compose(card, mid=""):
         An email.message.EmailMessage ready for msmtp -t.
     """
     msg = EmailMessage()
-    msg["From"] = card.yaml["from"]
+    sender = card.yaml["from"]
+    msg["From"] = formataddr((realname, sender)) if realname else sender
     msg["To"] = ", ".join(card.yaml["to"])
     if "cc" in card.yaml:
         msg["Cc"] = ", ".join(card.yaml["cc"])
@@ -98,12 +128,85 @@ def compose(card, mid=""):
     if "in_reply_to" in card.yaml:
         msg["In-Reply-To"] = card.yaml["in_reply_to"]
     if "references" in card.yaml:
-        msg["References"] = " ".join(card.yaml["references"])
+        references = card.yaml["references"]
+        if not isinstance(references, list):
+            raise TypeError("references must be a list")
+        msg["References"] = " ".join(references)
     msg.set_content(card.body)
+    for attachment, data in attachment_data:
+        representation = attachment.yaml["representation"]
+        filename = attachment.yaml.get("filename") or None
+        if representation == "payload":
+            maintype, subtype = attachment.yaml["content_type"].split("/", 1)
+            msg.add_attachment(
+                data, maintype=maintype, subtype=subtype, filename=filename
+            )
+        elif representation == "message":
+            msg.add_attachment(
+                BytesParser(policy=SMTP).parsebytes(data), filename=filename
+            )
+        elif representation == "entity":
+            if not msg.is_multipart():
+                msg.make_mixed()
+            entity = BytesParser(policy=SMTP).parsebytes(data)
+            if entity.get_content_disposition() is None:
+                entity["Content-Disposition"] = "attachment"
+            msg.attach(entity)
+        else:
+            raise ValueError(representation)
     return msg
 
 
-def flush(deck, card_id, sha, msmtp=("msmtp",)):
+def _sign(msg, sign_key):
+    part = EmailMessage(policy=SMTP)
+    part.set_content(msg.get_content())
+    del part["MIME-Version"]
+    part_bytes = bytes(part)
+    signature = subprocess.run(
+        [
+            "gpg",
+            "--batch",
+            "--armor",
+            "--detach-sign",
+            "--digest-algo",
+            "SHA256",
+            "-u",
+            sign_key,
+        ],
+        input=part_bytes,
+        capture_output=True,
+        check=True,
+    ).stdout
+    signature = signature.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    boundary = uuid.uuid4().hex
+    outer = EmailMessage(policy=SMTP)
+    for name, value in msg.items():
+        if name.lower() not in (
+            "content-type",
+            "content-transfer-encoding",
+            "mime-version",
+        ):
+            outer[name] = value
+    outer["MIME-Version"] = "1.0"
+    outer["Content-Type"] = (
+        f'multipart/signed; micalg="pgp-sha256"; '
+        f'protocol="application/pgp-signature"; boundary="{boundary}"'
+    )
+    outer.set_payload("")
+    return bytes(outer) + b"".join(
+        [
+            b"--" + boundary.encode() + b"\r\n",
+            part_bytes,
+            b"\r\n--" + boundary.encode() + b"\r\n",
+            b'Content-Type: application/pgp-signature; name="signature.asc"\r\n',
+            b"\r\n",
+            signature,
+            b"\r\n--" + boundary.encode() + b"--\r\n",
+        ]
+    )
+
+
+def flush(deck, card_id, sha, msmtp=("msmtp",), *, realname="", sign_key=""):
     """Send the card's bytes at ``sha`` and stamp the send on the deck.
 
     msmtp is invoked exactly once per call. The ConflictError retry wraps
@@ -132,11 +235,17 @@ def flush(deck, card_id, sha, msmtp=("msmtp",)):
     card = at(deck, card_id, sha)
     sender = card.yaml["from"]
     mid = make_msgid(domain=sender.split("@")[1])
-    msg = compose(card, mid)
+    msg = compose(
+        card,
+        mid,
+        attachments(deck, card, sha),
+        realname=realname,
+    )
     msg["Date"] = datetime.now(timezone.utc)
+    payload = _sign(msg, sign_key) if sign_key else bytes(msg)
     subprocess.run(
         [*msmtp, "-a", sender, "-t"],
-        input=bytes(msg),
+        input=payload,
         stderr=subprocess.PIPE,
         check=True,
     )
