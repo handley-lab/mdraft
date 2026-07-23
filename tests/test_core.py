@@ -1,4 +1,8 @@
 import subprocess
+from email import message_from_bytes
+from email.message import EmailMessage
+from email.policy import SMTP
+from email.policy import default as default_policy
 
 import mddb
 import pytest
@@ -40,6 +44,71 @@ def fake_msmtp(tmp_path):
     )
     script.chmod(0o755)
     return script, log
+
+
+@pytest.fixture
+def signer(tmp_path, monkeypatch):
+    home = tmp_path / "gnupg"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("GNUPGHOME", str(home))
+    monkeypatch.setenv("GIT_CONFIG_COUNT", "1")
+    monkeypatch.setenv("GIT_CONFIG_KEY_0", "commit.gpgsign")
+    monkeypatch.setenv("GIT_CONFIG_VALUE_0", "false")
+    subprocess.run(
+        [
+            "gpg",
+            "--batch",
+            "--pinentry-mode",
+            "loopback",
+            "--passphrase",
+            "",
+            "--quick-gen-key",
+            "gate test <gate@test.invalid>",
+            "ed25519",
+            "sign",
+        ],
+        capture_output=True,
+        check=True,
+    )
+    listing = subprocess.run(
+        ["gpg", "--batch", "--with-colons", "--list-secret-keys"],
+        capture_output=True,
+        check=True,
+        text=True,
+    ).stdout
+    key = next(
+        line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr")
+    )
+    return (
+        "gpg",
+        "--batch",
+        "--armor",
+        "--detach-sign",
+        "--digest-algo",
+        "SHA512",
+        "--local-user",
+        f"{key}!",
+    )
+
+
+def wire_message(log):
+    raw = log.read_bytes()
+    return raw[raw.index(b"\n") + 1 :]
+
+
+def verify_signed(wire, tmp_path):
+    parsed = message_from_bytes(wire, policy=default_policy)
+    body, signature = parsed.iter_parts()
+    boundary = ("--" + parsed.get_boundary()).encode()
+    raw_body = wire.split(boundary + b"\r\n", 1)[1].split(boundary, 1)[0][:-2]
+    (tmp_path / "signed-part").write_bytes(raw_body)
+    (tmp_path / "signature.asc").write_bytes(signature.get_content())
+    subprocess.run(
+        ["gpg", "--verify", tmp_path / "signature.asc", tmp_path / "signed-part"],
+        capture_output=True,
+        check=True,
+    )
+    return body
 
 
 def test_compose_full_envelope(deck):
@@ -85,9 +154,245 @@ def test_flush_stamps_date_on_the_wire(deck, fake_msmtp):
     assert "Date: " in log.read_text()
 
 
+def test_signed_plain_body_verifies_and_keeps_envelope_outside_signature(
+    deck, fake_msmtp, signer, tmp_path
+):
+    db, card_id = deck
+    script, log = fake_msmtp
+    mddraft.flush(
+        db.root,
+        card_id,
+        db.head(),
+        msmtp=(str(script),),
+        realname="Will Handley",
+        signer=signer,
+    )
+    wire = wire_message(log)
+    parsed = message_from_bytes(wire, policy=default_policy)
+    assert parsed["From"] == "Will Handley <wh260@cam.ac.uk>"
+    assert parsed.get_content_type() == "multipart/signed"
+    body = verify_signed(wire, tmp_path)
+    assert body.get_content_type() == "text/plain"
+    assert body.get_content().replace("\r\n", "\n") == (
+        "Dear Smith,\n\nI must decline.\n\nWill\n"
+    )
+    assert "From" not in body
+
+
+def test_signed_attachment_body_verifies_and_retains_exact_file(
+    tmp_path, fake_msmtp, signer
+):
+    db, card_id = attachment_deck(
+        tmp_path,
+        [
+            (
+                {
+                    "filename": "result.dat",
+                    "content_type": "application/octet-stream",
+                    "representation": "payload",
+                },
+                b"attachment bytes",
+            )
+        ],
+    )
+    script, log = fake_msmtp
+    mddraft.flush(
+        db.root, card_id, db.head(), msmtp=(str(script),), signer=signer
+    )
+    body = verify_signed(wire_message(log), tmp_path)
+    attachment = next(body.iter_attachments())
+    assert attachment.get_filename() == "result.dat"
+    assert attachment.get_payload(decode=True) == b"attachment bytes"
+
+
+def test_signed_utf8_message_and_entity_attachments_verify(
+    tmp_path, fake_msmtp, signer
+):
+    embedded = EmailMessage(policy=SMTP)
+    embedded["From"] = "josé@example.org"
+    embedded.set_content("pièce jointe\n")
+    entity = EmailMessage(policy=SMTP)
+    entity.make_related()
+    html = EmailMessage(policy=SMTP)
+    html.set_content("<p>déjà vu</p>", subtype="html")
+    entity.attach(html)
+    db, card_id = attachment_deck(
+        tmp_path,
+        [
+            (
+                {
+                    "filename": "forwarded.eml",
+                    "content_type": "message/rfc822",
+                    "representation": "message",
+                },
+                embedded.as_bytes(policy=SMTP),
+            ),
+            (
+                {
+                    "content_type": "multipart/related",
+                    "representation": "entity",
+                },
+                entity.as_bytes(policy=SMTP),
+            ),
+        ],
+    )
+    card = db.read(card_id)
+    card.body = "Chère collègue — merci.\n"
+    with db.editor(rationale="utf-8 signed body") as editor:
+        editor.update(card, summary=card.summary)
+    script, log = fake_msmtp
+    mddraft.flush(
+        db.root, card_id, db.head(), msmtp=(str(script),), signer=signer
+    )
+    body = verify_signed(wire_message(log), tmp_path)
+    assert body.get_body().get_content().replace("\r\n", "\n") == (
+        "Chère collègue — merci.\n"
+    )
+    message_part, entity_part = body.iter_attachments()
+    assert message_part.get_payload(0)["From"] == "josé@example.org"
+    assert entity_part.get_content_type() == "multipart/related"
+
+
+def test_gpg_failure_sends_and_commits_nothing(deck, fake_msmtp):
+    db, card_id = deck
+    script, log = fake_msmtp
+    sha = db.head()
+    with pytest.raises(subprocess.CalledProcessError):
+        mddraft.flush(
+            db.root,
+            card_id,
+            sha,
+            msmtp=(str(script),),
+            signer=("false",),
+        )
+    assert not log.exists()
+    assert mddb.MDDB(db.root).head() == sha
+
+
 def test_compose_missing_envelope_raises_keyerror():
     with pytest.raises(KeyError):
         mddraft.compose(mddb.Card(yaml={"to": ["a@example.org"]}, body="hi"))
+
+
+def test_scalar_references_fail_before_msmtp(tmp_path, fake_msmtp):
+    db = mddb.MDDB.init(tmp_path / "scalar-references")
+    with db.editor(rationale="malformed legacy draft") as editor:
+        card = editor.create(
+            title="bad references",
+            summary="must not send",
+            yaml={
+                "to": ["a@example.org"],
+                "from": "me@example.org",
+                "subject": "bad references",
+                "references": "<root@example.org>",
+            },
+            body="body\n",
+        )
+    script, log = fake_msmtp
+    with pytest.raises(TypeError, match="references must be a list"):
+        mddraft.flush(db.root, card.id, db.head(), msmtp=(str(script),))
+    assert not log.exists()
+
+
+def attachment_deck(tmp_path, attachment_rows):
+    db = mddb.MDDB.init(tmp_path / "attachments")
+    with db.editor(rationale="draft with attachments") as editor:
+        ids = []
+        for number, (yaml, data) in enumerate(attachment_rows):
+            attachment = editor.create(
+                title=yaml.get("filename") or f"attachment {number}",
+                summary=yaml["content_type"],
+                yaml={"kind": "attachment", **yaml},
+                relpath=f"attachments/{number}.md",
+                blob=data,
+                blob_ext=".bin",
+            )
+            ids.append(attachment.id)
+        draft = editor.create(
+            title="message with files",
+            summary="attachment test",
+            yaml={
+                "to": ["a@example.org"],
+                "from": "me@example.org",
+                "subject": "files",
+                "attachments": ids,
+            },
+            body="See attached.\n",
+        )
+    return db, draft.id
+
+
+def test_payload_attachment_roundtrips_from_pinned_commit(tmp_path):
+    db, card_id = attachment_deck(
+        tmp_path,
+        [
+            (
+                {
+                    "filename": "archive.tar.gz",
+                    "content_type": "application/octet-stream",
+                    "representation": "payload",
+                },
+                b"original bytes",
+            )
+        ],
+    )
+    sha = db.head()
+    card = mddraft.at(db.root, card_id, sha)
+    selected = mddraft.attachments(db.root, card, sha)
+    attachment = db.read(card.yaml["attachments"][0])
+    attachment.blob.write_bytes(b"changed after approval")
+    part = next(mddraft.compose(card, attachment_data=selected).iter_attachments())
+    assert part.get_filename() == "archive.tar.gz"
+    assert part.get_content_type() == "application/octet-stream"
+    assert part.get_payload(decode=True) == b"original bytes"
+
+
+def test_message_and_multipart_entity_attachments_roundtrip(tmp_path):
+    embedded = EmailMessage(policy=SMTP)
+    embedded["From"] = "source@example.org"
+    embedded["To"] = "target@example.org"
+    embedded.set_content("embedded body\n")
+    entity = EmailMessage(policy=SMTP)
+    entity.make_related()
+    html = EmailMessage(policy=SMTP)
+    html.set_content("<p>body</p>", subtype="html")
+    image = EmailMessage(policy=SMTP)
+    image.set_content(b"png", maintype="image", subtype="png", disposition="inline")
+    entity.attach(html)
+    entity.attach(image)
+    db, card_id = attachment_deck(
+        tmp_path,
+        [
+            (
+                {
+                    "filename": "forwarded.eml",
+                    "content_type": "message/rfc822",
+                    "representation": "message",
+                },
+                bytes(embedded),
+            ),
+            (
+                {
+                    "content_type": "multipart/related",
+                    "representation": "entity",
+                },
+                bytes(entity),
+            ),
+        ],
+    )
+    card = mddraft.at(db.root, card_id, db.head())
+    msg = mddraft.compose(
+        card, attachment_data=mddraft.attachments(db.root, card, db.head())
+    )
+    message_part, entity_part = msg.iter_attachments()
+    assert message_part.get_content_type() == "message/rfc822"
+    assert message_part.get_filename() == "forwarded.eml"
+    assert message_part.get_payload(0)["From"] == "source@example.org"
+    assert entity_part.get_content_type() == "multipart/related"
+    assert [part.get_content_type() for part in entity_part.iter_parts()] == [
+        "text/html",
+        "image/png",
+    ]
 
 
 def test_at_reads_sha_pinned_bytes(deck):
