@@ -47,7 +47,7 @@ def fake_msmtp(tmp_path):
 
 
 @pytest.fixture
-def sign_key(tmp_path, monkeypatch):
+def signer(tmp_path, monkeypatch):
     home = tmp_path / "gnupg"
     home.mkdir(mode=0o700)
     monkeypatch.setenv("GNUPGHOME", str(home))
@@ -76,8 +76,18 @@ def sign_key(tmp_path, monkeypatch):
         check=True,
         text=True,
     ).stdout
-    return next(
+    key = next(
         line.split(":")[9] for line in listing.splitlines() if line.startswith("fpr")
+    )
+    return (
+        "gpg",
+        "--batch",
+        "--armor",
+        "--detach-sign",
+        "--digest-algo",
+        "SHA512",
+        "--local-user",
+        f"{key}!",
     )
 
 
@@ -145,7 +155,7 @@ def test_flush_stamps_date_on_the_wire(deck, fake_msmtp):
 
 
 def test_signed_plain_body_verifies_and_keeps_envelope_outside_signature(
-    deck, fake_msmtp, sign_key, tmp_path
+    deck, fake_msmtp, signer, tmp_path
 ):
     db, card_id = deck
     script, log = fake_msmtp
@@ -155,7 +165,7 @@ def test_signed_plain_body_verifies_and_keeps_envelope_outside_signature(
         db.head(),
         msmtp=(str(script),),
         realname="Will Handley",
-        sign_key=sign_key,
+        signer=signer,
     )
     wire = wire_message(log)
     parsed = message_from_bytes(wire, policy=default_policy)
@@ -170,7 +180,7 @@ def test_signed_plain_body_verifies_and_keeps_envelope_outside_signature(
 
 
 def test_signed_attachment_body_verifies_and_retains_exact_file(
-    tmp_path, fake_msmtp, sign_key
+    tmp_path, fake_msmtp, signer
 ):
     db, card_id = attachment_deck(
         tmp_path,
@@ -187,7 +197,7 @@ def test_signed_attachment_body_verifies_and_retains_exact_file(
     )
     script, log = fake_msmtp
     mddraft.flush(
-        db.root, card_id, db.head(), msmtp=(str(script),), sign_key=sign_key
+        db.root, card_id, db.head(), msmtp=(str(script),), signer=signer
     )
     body = verify_signed(wire_message(log), tmp_path)
     attachment = next(body.iter_attachments())
@@ -196,7 +206,7 @@ def test_signed_attachment_body_verifies_and_retains_exact_file(
 
 
 def test_signed_utf8_message_and_entity_attachments_verify(
-    tmp_path, fake_msmtp, sign_key
+    tmp_path, fake_msmtp, signer
 ):
     embedded = EmailMessage(policy=SMTP)
     embedded["From"] = "josé@example.org"
@@ -232,7 +242,7 @@ def test_signed_utf8_message_and_entity_attachments_verify(
         editor.update(card, summary=card.summary)
     script, log = fake_msmtp
     mddraft.flush(
-        db.root, card_id, db.head(), msmtp=(str(script),), sign_key=sign_key
+        db.root, card_id, db.head(), msmtp=(str(script),), signer=signer
     )
     body = verify_signed(wire_message(log), tmp_path)
     assert body.get_body().get_content().replace("\r\n", "\n") == (
@@ -253,7 +263,7 @@ def test_gpg_failure_sends_and_commits_nothing(deck, fake_msmtp):
             card_id,
             sha,
             msmtp=(str(script),),
-            sign_key="NO-SUCH-KEY",
+            signer=("false",),
         )
     assert not log.exists()
     assert mddb.MDDB(db.root).head() == sha

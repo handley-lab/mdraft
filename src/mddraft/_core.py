@@ -158,7 +158,7 @@ def compose(card, mid="", attachment_data=(), realname=""):
     return msg
 
 
-def _sign(msg, sign_key):
+def _sign(msg, signer):
     part = deepcopy(msg)
     for name in list(part.keys()):
         if name.lower() not in (
@@ -170,16 +170,7 @@ def _sign(msg, sign_key):
             del part[name]
     part_bytes = part.as_bytes(policy=SMTP)
     signature = subprocess.run(
-        [
-            "gpg",
-            "--batch",
-            "--armor",
-            "--detach-sign",
-            "--digest-algo",
-            "SHA256",
-            "-u",
-            sign_key,
-        ],
+        signer,
         input=part_bytes,
         capture_output=True,
         check=True,
@@ -196,7 +187,7 @@ def _sign(msg, sign_key):
             outer[name] = value
     outer["MIME-Version"] = "1.0"
     outer["Content-Type"] = (
-        f'multipart/signed; micalg="pgp-sha256"; '
+        f'multipart/signed; micalg="pgp-sha512"; '
         f'protocol="application/pgp-signature"; boundary="{boundary}"'
     )
     outer.set_payload("")
@@ -214,7 +205,7 @@ def _sign(msg, sign_key):
     )
 
 
-def flush(deck, card_id, sha, msmtp=("msmtp",), *, realname="", sign_key=""):
+def flush(deck, card_id, sha, msmtp=("msmtp",), *, realname="", signer=()):
     """Send the card's bytes at ``sha`` and stamp the send on the deck.
 
     msmtp is invoked exactly once per call. The ConflictError retry wraps
@@ -250,7 +241,7 @@ def flush(deck, card_id, sha, msmtp=("msmtp",), *, realname="", sign_key=""):
         realname=realname,
     )
     msg["Date"] = datetime.now(timezone.utc)
-    payload = _sign(msg, sign_key) if sign_key else bytes(msg)
+    payload = _sign(msg, signer) if signer else bytes(msg)
     subprocess.run(
         [*msmtp, "-a", sender, "-t"],
         input=payload,
