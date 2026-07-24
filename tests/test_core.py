@@ -436,7 +436,7 @@ def test_flush_sends_the_approved_sha_not_head(deck, fake_msmtp):
     assert "SNEAKY" not in wire
 
 
-def test_flush_nonzero_msmtp_commits_nothing(deck, fake_msmtp, tmp_path):
+def test_flush_nonzero_msmtp_remains_ambiguous(deck, fake_msmtp, tmp_path):
     db, card_id = deck
     script, log = fake_msmtp
     (tmp_path / "msmtp-fail").touch()
@@ -444,9 +444,113 @@ def test_flush_nonzero_msmtp_commits_nothing(deck, fake_msmtp, tmp_path):
     with pytest.raises(subprocess.CalledProcessError):
         mddraft.flush(db.root, card_id, sha, msmtp=(str(script),))
     fresh = mddb.MDDB(db.root).read(card_id)
-    assert fresh.yaml["state"] == "draft"
+    assert fresh.yaml["send_state"] == "ambiguous"
     assert "sent_mid" not in fresh.yaml
-    assert mddb.MDDB(db.root).head() == sha
+    assert fresh.yaml["approved_sha"] == sha
+    with pytest.raises(mddraft.AmbiguousSend):
+        mddraft.flush(db.root, card_id, mddb.MDDB(db.root).head(), msmtp=(str(script),))
+    assert log.read_text().count("CALL") == 1
+
+
+def test_death_before_transport_is_non_resendable(deck, fake_msmtp):
+    db, card_id = deck
+    script, log = fake_msmtp
+
+    def die(_payload):
+        raise RuntimeError("process death before transport")
+
+    with pytest.raises(RuntimeError, match="before transport"):
+        mddraft.flush(
+            db.root,
+            card_id,
+            db.head(),
+            msmtp=(str(script),),
+            before_transport=die,
+        )
+    assert not log.exists()
+    fresh = mddb.MDDB(db.root).read(card_id)
+    assert fresh.yaml["send_state"] == "ambiguous"
+    with pytest.raises(mddraft.AmbiguousSend):
+        mddraft.flush(db.root, card_id, mddb.MDDB(db.root).head(), msmtp=(str(script),))
+    assert not log.exists()
+
+
+def test_death_after_transport_reconciles_exact_wire_without_resend(
+    deck, fake_msmtp
+):
+    db, card_id = deck
+    script, log = fake_msmtp
+
+    def die(_payload):
+        raise RuntimeError("process death after transport")
+
+    with pytest.raises(RuntimeError, match="after transport"):
+        mddraft.flush(
+            db.root,
+            card_id,
+            db.head(),
+            msmtp=(str(script),),
+            after_transport=die,
+        )
+    assert log.read_text().count("CALL") == 1
+    with pytest.raises(mddraft.AmbiguousSend):
+        mddraft.flush(db.root, card_id, mddb.MDDB(db.root).head(), msmtp=(str(script),))
+    stored = b"X-Mailstore: added-after-send\r\n" + wire_message(log)
+    mid = mddraft.reconcile(db.root, card_id, [stored])
+    fresh = mddb.MDDB(db.root).read(card_id)
+    assert fresh.yaml["sent_mid"] == mid
+    assert fresh.yaml["send_state"] == "sent"
+    assert log.read_text().count("CALL") == 1
+
+
+def test_reconcile_rejects_same_mid_with_altered_wire(deck, fake_msmtp):
+    db, card_id = deck
+    script, log = fake_msmtp
+
+    with pytest.raises(RuntimeError):
+        mddraft.flush(
+            db.root,
+            card_id,
+            db.head(),
+            msmtp=(str(script),),
+            after_transport=lambda _payload: (_ for _ in ()).throw(RuntimeError()),
+        )
+    altered = wire_message(log).replace(b"Dear Smith", b"Dear Smythe")
+    with pytest.raises(mddraft.AmbiguousSend, match="1 observations and 0 matches"):
+        mddraft.reconcile(db.root, card_id, [altered])
+
+
+def test_reconcile_rejects_duplicate_exact_observations(deck, fake_msmtp):
+    db, card_id = deck
+    script, log = fake_msmtp
+    with pytest.raises(RuntimeError):
+        mddraft.flush(
+            db.root,
+            card_id,
+            db.head(),
+            msmtp=(str(script),),
+            after_transport=lambda _payload: (_ for _ in ()).throw(RuntimeError()),
+        )
+    raw = wire_message(log)
+    with pytest.raises(mddraft.AmbiguousSend, match="2 observations and 2 matches"):
+        mddraft.reconcile(db.root, card_id, [raw, raw])
+
+
+def test_reconcile_rejects_one_match_plus_one_mismatch(deck, fake_msmtp):
+    db, card_id = deck
+    script, log = fake_msmtp
+    with pytest.raises(RuntimeError):
+        mddraft.flush(
+            db.root,
+            card_id,
+            db.head(),
+            msmtp=(str(script),),
+            after_transport=lambda _payload: (_ for _ in ()).throw(RuntimeError()),
+        )
+    raw = wire_message(log)
+    altered = raw.replace(b"Dear Smith", b"Dear Smythe")
+    with pytest.raises(mddraft.AmbiguousSend, match="2 observations and 1 matches"):
+        mddraft.reconcile(db.root, card_id, [raw, altered])
 
 
 def test_flush_refuses_already_sent(deck, fake_msmtp):
