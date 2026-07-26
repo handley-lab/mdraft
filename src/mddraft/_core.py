@@ -7,6 +7,8 @@ The gate itself — who may call flush, under which user, behind which token —
 is tenancy wiring, deliberately outside this library.
 """
 
+import hashlib
+import json
 import subprocess
 import uuid
 from copy import deepcopy
@@ -14,6 +16,7 @@ from datetime import datetime, timezone
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import SMTP
+from email.policy import default as DEFAULT
 from email.utils import formataddr, make_msgid
 from pathlib import Path
 
@@ -46,6 +49,52 @@ notmuch holds the product, sent_mid references it.
 
 class AlreadySent(RuntimeError):
     """The card already carries a sent_mid — flushing again would resend."""
+
+
+class AmbiguousSend(RuntimeError):
+    """Transport may have been invoked; automatic resend is forbidden."""
+
+
+def _stamp(db, card_id, values, rationale):
+    while True:
+        try:
+            with db.editor(rationale=rationale) as editor:
+                fresh = editor.read(card_id)
+                fresh.yaml.update(values)
+                editor.update(fresh, summary=fresh.summary)
+            return
+        except mddb.ConflictError:
+            db = mddb.MDDB(db.root)
+
+
+def _authored_digest(payload):
+    """Digest authored headers, body and attachments independent of mail storage."""
+    message = BytesParser(policy=DEFAULT).parsebytes(payload)
+    content = (
+        next(message.iter_parts())
+        if message.get_content_type() == "multipart/signed"
+        else message
+    )
+    body = content.get_body(preferencelist=("plain",))
+    authored = {
+        "headers": [
+            [name, str(message.get(name, ""))]
+            for name in ("From", "To", "Cc", "Subject", "Message-ID")
+        ],
+        "body": body.get_content().replace("\r\n", "\n") if body else "",
+        "attachments": [],
+    }
+    for part in content.iter_attachments():
+        data = part.get_payload(decode=True)
+        authored["attachments"].append(
+            [
+                part.get_content_type(),
+                part.get_filename() or "",
+                hashlib.sha256(data if data is not None else part.as_bytes()).hexdigest(),
+            ]
+        )
+    canonical = json.dumps(authored, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def _at(deck, card_id, sha):
@@ -205,32 +254,48 @@ def _sign(msg, signer):
     )
 
 
-def flush(deck, card_id, sha, msmtp=("msmtp",), *, realname="", signer=()):
+def flush(
+    deck,
+    card_id,
+    sha,
+    msmtp=("msmtp",),
+    *,
+    realname="",
+    signer=(),
+    before_transport=None,
+    after_transport=None,
+):
     """Send the card's bytes at ``sha`` and stamp the send on the deck.
 
-    msmtp is invoked exactly once per call. The ConflictError retry wraps
-    ONLY the stamp commit, reusing the already-generated Message-ID — a
-    concurrent deck commit can never cause a second send. A nonzero msmtp
-    exit propagates before anything is committed.
+    The complete wire payload is materialised first. Its approved SHA, fixed
+    Message-ID and digest are then committed as an ambiguous, non-resendable
+    intent before msmtp is invoked. A known or unknown failure after that
+    boundary remains ambiguous until :func:`reconcile` observes the exact raw
+    message in sent mail.
 
     Args:
         deck: Path to the outbox deck.
         card_id: The card to send.
         sha: The commit Will read verbatim; its bytes go to the wire.
         msmtp: The msmtp argv prefix (tests substitute a capture script).
+        before_transport: Test fault hook after the durable intent commit.
+        after_transport: Test fault hook after successful process completion.
 
     Returns:
         The Message-ID of the sent mail (notmuch holds the product).
 
     Raises:
         AlreadySent: The card at HEAD already carries a sent_mid.
-        subprocess.CalledProcessError: msmtp exited nonzero; nothing was
-            committed and the card is still a draft.
+        AmbiguousSend: A prior attempt crossed the durable send boundary.
+        subprocess.CalledProcessError: msmtp exited nonzero; the committed
+            attempt remains ambiguous and cannot be automatically retried.
     """
     db = mddb.MDDB(deck)
     head_yaml = db.read(card_id).yaml
     if "sent_mid" in head_yaml:
         raise AlreadySent(head_yaml["sent_mid"])
+    if head_yaml.get("send_state") == "ambiguous":
+        raise AmbiguousSend(head_yaml["send_mid"])
     card = at(deck, card_id, sha)
     sender = card.yaml["from"]
     mid = make_msgid(domain=sender.split("@")[1])
@@ -242,24 +307,67 @@ def flush(deck, card_id, sha, msmtp=("msmtp",), *, realname="", signer=()):
     )
     msg["Date"] = datetime.now(timezone.utc)
     payload = _sign(msg, signer) if signer else bytes(msg)
+    digest = hashlib.sha256(payload).hexdigest()
+    _stamp(
+        db,
+        card_id,
+        {
+            "send_state": "ambiguous",
+            "send_mid": mid,
+            "approved_sha": sha,
+            "wire_digest": digest,
+            "authored_digest": _authored_digest(payload),
+            "sending_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        },
+        f"prepare send {mid}",
+    )
+    if before_transport:
+        before_transport(payload)
     subprocess.run(
         [*msmtp, "-a", sender, "-t"],
         input=payload,
         stderr=subprocess.PIPE,
         check=True,
     )
+    if after_transport:
+        after_transport(payload)
     stamp = {
         "state": "sent",
         "sent_mid": mid,
         "sent_sha": sha,
         "sent_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
-    while True:
-        try:
-            with db.editor(rationale=f"sent {mid}") as editor:
-                fresh = editor.read(card_id)
-                fresh.yaml.update(stamp)
-                editor.update(fresh, summary=fresh.summary)
-            return mid
-        except mddb.ConflictError:
-            db = mddb.MDDB(deck)
+    stamp["send_state"] = "sent"
+    _stamp(db, card_id, stamp, f"sent {mid}")
+    return mid
+
+
+def reconcile(deck, card_id, observations):
+    """Complete one ambiguous send from one exact raw sent-message observation."""
+    db = mddb.MDDB(deck)
+    card = db.read(card_id)
+    if card.yaml.get("send_state") != "ambiguous":
+        raise ValueError("draft is not in ambiguous send state")
+    wire_digest = card.yaml["wire_digest"]
+    authored_digest = card.yaml["authored_digest"]
+    observations = list(observations)
+    matches = [
+        raw
+        for raw in observations
+        if hashlib.sha256(raw).hexdigest() == wire_digest
+        or _authored_digest(raw) == authored_digest
+    ]
+    if len(observations) != 1 or len(matches) != 1:
+        raise AmbiguousSend(
+            f"expected one exact sent observation for {card.yaml['send_mid']}, "
+            f"found {len(observations)} observations and {len(matches)} matches"
+        )
+    stamp = {
+        "state": "sent",
+        "send_state": "sent",
+        "sent_mid": card.yaml["send_mid"],
+        "sent_sha": card.yaml["approved_sha"],
+        "sent_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    _stamp(db, card_id, stamp, f"reconcile sent {card.yaml['send_mid']}")
+    return card.yaml["send_mid"]
