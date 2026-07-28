@@ -42,11 +42,12 @@ constructs the calls; compose() raises KeyError on missing required keys):
 bcc is deliberately absent from v1: envelope-vs-header semantics with
 ``msmtp -t`` are a trap, deferred until actually needed.
 
-Body = the exact plain-text email body, one unwrapped line per paragraph;
-compose() soft-wraps it onto the wire as format=flowed (RFC 3676). The mutt
-signature convention holds: footer preceded by a lone ``-- `` line. Sent
-mail is never copied into cards: notmuch holds the product, sent_mid
-references it.
+Body = the exact plain-text email body, one unwrapped line per paragraph —
+the wire carries it verbatim (quoted-printable) and clients wrap to their
+own width; generator-side soft-wrapping is what Outlook's remove-extra-
+line-breaks heuristic mangles. The mutt signature convention holds: footer
+preceded by a lone ``-- `` line. Sent mail is never copied into cards:
+notmuch holds the product, sent_mid references it.
 """
 
 
@@ -154,32 +155,6 @@ def attachments(deck, card, sha):
     return result
 
 
-def _flowed(body, width=72):
-    """Encode body text as RFC 3676 format=flowed.
-
-    Draft cards store paragraphs as single unwrapped lines; wire encoding
-    soft-wraps them at ``width`` with trailing-space breaks so receivers
-    reflow to their own display width. Quoted lines (``>``) pass through
-    untouched, and space-stuffing protects lines starting with a space or
-    ``From ``. The signature separator ``-- `` is exempt from flowing by
-    the RFC and survives verbatim.
-    """
-    lines = []
-    for line in body.split("\n"):
-        if line.startswith(" ") or line.startswith("From "):
-            line = " " + line
-        while len(line) > width and not line.startswith(">"):
-            cut = line.rfind(" ", 0, width)
-            if cut <= 0:
-                break
-            lines.append(line[: cut + 1])
-            line = line[cut + 1 :]
-            if line.startswith(" ") or line.startswith("From "):
-                line = " " + line
-        lines.append(line)
-    return "\n".join(lines)
-
-
 def compose(card, mid="", attachment_data=(), realname=""):
     """Compose a draft card into an RFC822 message.
 
@@ -211,8 +186,7 @@ def compose(card, mid="", attachment_data=(), realname=""):
         if not isinstance(references, list):
             raise TypeError("references must be a list")
         msg["References"] = " ".join(references)
-    msg.set_content(_flowed(card.body))
-    msg.set_param("format", "flowed")
+    msg.set_content(card.body, cte="quoted-printable")
     for attachment, data in attachment_data:
         representation = attachment.yaml["representation"]
         filename = attachment.yaml.get("filename") or None

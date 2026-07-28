@@ -124,35 +124,21 @@ def test_compose_full_envelope(deck):
     assert msg.get_content() == "Dear Smith,\n\nI must decline.\n\nWill\n"
 
 
-def test_compose_wire_is_format_flowed(tmp_path):
-    paragraph = "word " * 40
+def test_compose_keeps_paragraphs_unwrapped_on_the_wire(tmp_path):
     body = (
-        paragraph.strip() + "\n"
-        "\n"
-        "> " + "quoted " * 15 + "stays one hard line\n"
-        "\n"
-        "From the top, and a leading-space line:\n"
-        " indented\n"
+        "word " * 300 + "one unwrapped paragraph\n"
         "\n"
         "-- \n"
         "Will\n"
     )
     card = mddb.Card(
-        yaml={"to": ["a@example.org"], "from": "wh260@cam.ac.uk", "subject": "flowed"},
+        yaml={"to": ["a@example.org"], "from": "wh260@cam.ac.uk", "subject": "wire"},
         body=body,
     )
     msg = mddraft.compose(card)
-    assert msg.get_param("format") == "flowed"
-    lines = msg.get_content().split("\n")
-    flowed = [line for line in lines if line.endswith(" ") and line != "-- "]
-    assert flowed and all(len(line) <= 72 for line in flowed)
-    blank = lines.index("")
-    assert "".join(lines[:blank]) == paragraph.strip()
-    quoted = next(line for line in lines if line.startswith("> "))
-    assert len(quoted) > 72
-    assert " From the top, and a leading-space line:" in lines
-    assert "  indented" in lines
-    assert msg.get_content().endswith("\n-- \nWill\n")
+    assert msg["Content-Transfer-Encoding"] == "quoted-printable"
+    assert msg.get_content() == body
+    assert max(len(line) for line in bytes(msg).splitlines()) <= 998
 
 
 def test_compose_fresh_mail_omits_threading_and_cc(tmp_path):
