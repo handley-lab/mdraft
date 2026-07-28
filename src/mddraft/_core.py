@@ -42,7 +42,11 @@ constructs the calls; compose() raises KeyError on missing required keys):
 bcc is deliberately absent from v1: envelope-vs-header semantics with
 ``msmtp -t`` are a trap, deferred until actually needed.
 
-Body = the exact plain-text email body. Sent mail is never copied into cards:
+Body = the exact plain-text email body, one unwrapped line per paragraph —
+the wire carries it verbatim (quoted-printable) and clients wrap to their
+own width; generator-side soft-wrapping is what Outlook's remove-extra-
+line-breaks heuristic mangles. The mutt signature convention holds: footer
+preceded by a lone ``-- `` line. Sent mail is never copied into cards:
 notmuch holds the product, sent_mid references it.
 """
 
@@ -182,7 +186,7 @@ def compose(card, mid="", attachment_data=(), realname=""):
         if not isinstance(references, list):
             raise TypeError("references must be a list")
         msg["References"] = " ".join(references)
-    msg.set_content(card.body)
+    msg.set_content(card.body, cte="quoted-printable")
     for attachment, data in attachment_data:
         representation = attachment.yaml["representation"]
         filename = attachment.yaml.get("filename") or None
