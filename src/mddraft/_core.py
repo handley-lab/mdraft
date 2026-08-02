@@ -28,7 +28,11 @@ constructs the calls; compose() raises KeyError on missing required keys):
 
   kind: draft            required — the substrate filing key that makes a card
                          this layer's. flush() refuses any other kind, so a
-                         card that merely looks addressable is never sent
+                         card that merely looks addressable is never sent.
+                         The outbox deck also holds kind: attachment (ordered
+                         payload cards, read by attachments()) and
+                         kind: calendar-invitation (invite proposals the
+                         Outbox renders); neither is ever flushed
   to: [addr, ...]        required at flush
   cc: [addr, ...]        optional
   from: <address>        required — must equal an msmtp account name; selects
