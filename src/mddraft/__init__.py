@@ -18,7 +18,7 @@ from mddraft._core import (
 )
 from mddraft._correspondence import forward, reply
 
-__version__ = "0.0.10"
+__version__ = "0.0.11"
 __all__ = [
     "ENVELOPE_DOC",
     "AlreadySent",
