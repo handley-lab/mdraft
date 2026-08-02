@@ -51,6 +51,7 @@ def reply(
     if mid not in references:
         references.append(mid)
     envelope = {
+        "kind": "draft",
         "from": sender,
         "to": to,
         "subject": _subject(message["Subject"], "Re: "),
@@ -74,6 +75,7 @@ def forward(message, source_text, sender, text, *, recipients=(), footer=""):
     forwarded = _body(intro, "\n".join(headers), source_text)
     trailer = "----- End forwarded message -----"
     envelope = {
+        "kind": "draft",
         "from": sender,
         "to": list(recipients),
         "subject": _subject(message["Subject"], "Fwd: "),

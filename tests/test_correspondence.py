@@ -29,6 +29,7 @@ def test_reply_matches_mutt_shape_and_threading():
         footer="-- \nWill Handley",
     )
     assert envelope == {
+        "kind": "draft",
         "from": "wh260@cam.ac.uk",
         "to": ['"Senior Bursar (Sarah Tebbutt)" <senior.bursar@cai.cam.ac.uk>'],
         "subject": "RE: Paternity leave",
@@ -132,6 +133,7 @@ def test_forward_matches_mutt_inline_shape_and_has_no_threading():
         footer="-- \nWill Handley",
     )
     assert envelope == {
+        "kind": "draft",
         "from": "wh260@cam.ac.uk",
         "to": ["colleague@example.org"],
         "subject": "Fwd: Project descriptions",
