@@ -1,5 +1,8 @@
 # CLAUDE.md — mddraft
 
+Correct, minimal documentation is best. Omission is preferable to an
+unsupported or obsolete claim. Incorrect documentation is worst.
+
 Working rules for any agent touching this repo. The founding interests and their
 rationale live in DESIGN.md — read it before changing anything load-bearing.
 
@@ -48,4 +51,4 @@ is the design smell this repo exists to avoid.
   code: self-contained names, no path-dependent comments, invariants stated
   where they're enforced.
 - **The editor is the only mutation.** All card writes go through
-  `mddb.editor()` (one commit per logical change, rationale mandatory).
+  `db.editor()` (one commit per logical change, rationale mandatory).

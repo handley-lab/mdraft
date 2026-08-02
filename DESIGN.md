@@ -1,214 +1,46 @@
-# mddraft — founding design record
+# mddraft design
 
-Interests elicited by interview with Will, 2026-07-05. This document records the
-full context of the "bring email into the alan system" programme — wider than
-mddraft itself — so the interests survive as a unit. The scope table below says
-which repo owns which part.
+Correct, minimal documentation is best. Omission is preferable to an
+unsupported or obsolete claim. Incorrect documentation is worst.
 
-## The one principle
+## Store the process, reference the product
 
-**Store the process, reference the product.**
+The mail store already holds sent and received messages with their native bytes
+and Message-IDs. Copying finished mail into cards creates a weaker second source
+of truth. MDDraft therefore references finished mail by Message-ID.
 
-The mail store (notmuch over Maildir) already holds every message ever sent or
-received, addressable by Message-ID. mddraft never copies it. What the mailbox
-structurally cannot hold is the *trajectory*: the agent's proposed draft, the
-owner's edits, the spoken steers ("too formal", "don't chase him yet"), the
-abandoned versions. None of those ever become mail, so none have a Message-ID —
-they exist only if something else records them. mddraft is that something: a
-deck of draft cards where edits are commits, so the drafting process is
-captured for free by the substrate, and finished artifacts are referenced by
-MID rather than duplicated.
+What mail does not retain is the drafting trajectory: proposals, edits, steers,
+rejected versions, and abandonments. Draft cards preserve that process. Git
+commits record each mutation and its rationale, so proposal-to-final differences
+remain available without a parallel event store.
 
-## The interests
+## Never-event
 
-1. **The never-event.** An email going out in Will's name without his explicit
-   say-so must be *structurally impossible* — not discouraged by prompt, not
-   gated by a UI the agent can route around. Past experience: agents defeat
-   every soft gate; even mutt's send-confirmation was sometimes circumvented.
-   What earns trust is capability separation: the agent's surface is
-   write-draft only; the flush capability lives outside the agent's reach, and
-   the sole trigger is the owner's act. "It cannot send. I press a button."
+An agent must have no path to send mail. The sending credential and flush
+capability belong to a separate user and process that an agent cannot reach.
+Only the owner's explicit act after reading the verbatim outgoing content crosses
+that boundary. This applies to every sender identity, including an agent-owned
+address.
 
-2. **Verbatim approval, surface-agnostic.** At the moment of approval Will is
-   reading the *full, exact* outgoing text — no summary, no paraphrase — and
-   knows that what he reads is byte-for-byte what goes out. Pressing send
-   should feel like sending an email. The surface is deliberately open: phone
-   app, Linux app, Vim interface, cockpit — any is acceptable; the terminal is
-   not required.
+The approval display and flush operation read the same immutable card commit.
+Draft content is attacker-controlled and is rendered only as inert text or form
+values. Same-origin script execution is a send path.
 
-3. **Collaborative drafting.** Alan drafts from the cockpit or WhatsApp; Will
-   redrafts by speech; iteration feels like working with a secretary. Editing
-   in Vim via mutt is pleasant but not essential. The bright line is never the
-   composing — it is the send.
+The send-capable process must not execute Git in a repository writable by an
+agent: hooks, filters, and configuration are executable authority. Agent-owned
+proposal decks are inspected only through the deployment's exec-safe Git
+plumbing and copied into the trusted Outbox by the approved boundary.
 
-4. **Continuous learning.** The current system is amnesiac. Every draft, every
-   edit Will makes to it, every steer, plus enough surrounding context, is
-   stored to improve the drafting model over time. The proposal→final diff is
-   the training datum. mddb supplies this natively: `editor()` mutations are
-   commits, `history()` replays the trajectory, no bespoke versioning layer.
+## Boundaries
 
-5. **Alan's own address, secretary norms.** Alan gets his own email address.
-   Sending from that address to anyone important is governed by the same
-   never-event discipline — a secretary knows not to contact somebody in
-   another's name, or over their head, without asking.
+- mddb stores draft cards, history, and rationales.
+- notmuch/Maildir stores finished mail and provider-native evidence.
+- mddraft converts immutable cards to messages and performs one flush attempt.
+- msmtp owns identity routing and SMTP transport.
+- deployment repositories own users, credentials, browser approval, and service
+  wiring.
+- agents own judgement and proposals, never the flush capability.
 
-6. **Inbound: rate-limit the surfacing, not the transport.** Today the sync is
-   held to hourly purely to protect deep work from an inbox full of spam and
-   other-people's-urgency. Given a triage layer Will trusts, sync becomes
-   continuous and attention is protected downstream:
-   - *Interrupt tier* — the rare email where a prompt reply is significantly
-     advantageous **to Will** (his interest, not the sender's; email is mail —
-     letters opened asynchronously — not messaging). Only these surface
-     immediately.
-   - *Batch tier* — everything else waits for the morning brief and a daily
-     digest: "in the past 24 hours these arrived; these N are spam, I'm
-     confident; shall I unsubscribe from X and Y?" The digest is exhaustive at
-     a glance — Will needs to see everything that came through at least a bit;
-     nothing is silently swallowed. Alan proposes, Will disposes.
-   - *Clarify* — triaging, processing, and clarifying email is part of Alan's
-     GTD role: actionable mail mints GTD cards referencing the MID.
-
-7. **What David Allen says (checked, not assumed).** Allen sanctions email as
-   its own collection bucket — "as many inboxes as you need, as few as you can
-   get by with" — and never asks for a universal funnel. His demands: process
-   each bucket to zero; clarify every item; actionable outcomes land in the one
-   trusted system with the email filed/referenced, never left as its own
-   reminder. The "corrupted inbox" is his canonical failure (an inbox doubling
-   as an amorphous action pile). His *emergency scanning* vs *processing*
-   distinction maps directly onto the design: the agent does the emergency
-   scanning continuously so Will never has to; the agent pre-chews processing
-   so Will's clarify pass is confirm/adjust. Email does NOT get mirrored into
-   the GTD inbox — the GTD inbox receives only what clarification mints.
-
-8. **notmuch tagging substrate.** notmuch never worked well for Will because
-   nothing tags the corpus (190,713 messages, zero tagging automation — only
-   built-in flags). Fixing classification (afew or notmuch hooks) is worth
-   doing regardless of everything else and is a prerequisite for triage.
-
-9. **Auth to the Cambridge account.** The current M365-IMAP XOAUTH2 refresh
-   requires occasional interactive re-login; acceptable but not optimal. Goal:
-   on the rare occasion re-auth is genuinely needed, a single Raven login,
-   cached until the next genuine expiry. Survey the current flow before
-   changing it.
-
-10. **Modular placement.** No monolith. mddraft is a thin layer over mddb,
-    parallel to mdcal/mdgtd. Workflow (triage, digest, brief) is agents
-    composing the substrate — alan-work's business, not module code. The
-    transport underneath (offlineimap → notmuch → msmtp) already works and is
-    already de-Googled; mddraft does not reimplement it.
-
-## Why MIDs alone are not sufficient (the argument for the deck)
-
-Challenged and answered during the interview:
-
-- The *sent* email is already in notmuch, with Message-ID and In-Reply-To.
-  Re-storing it as a card is duplication with worse fidelity. For finished
-  artifacts, a MID pointer is strictly better than a copy.
-- But the learning signal is not the final email. It is the delta (what the
-  agent proposed vs what Will changed), the steers, and the abandoned drafts —
-  and none of these ever enter the mail store, so none have a MID to point at.
-  Either something records the process or it is lost.
-- The store must (a) version/diff, (b) be the live editable object the approval
-  surface displays and the sender flushes, (c) link out by MID. mddb provides
-  all three natively and is already a dependency of the whole stack; a bespoke
-  ledger would hand-roll versioning next to an existing versioned store.
-- The markdown is incidental: draft bodies are text. The deck exists solely to
-  hold what the mailbox throws away.
-
-## The substrate underneath (surveyed 2026-07-05, boltzmann)
-
-- **Ingest**: offlineimap, hourly oneshot timer, `postsynchook = notmuch new`.
-  Live accounts: Hermes (wh260@cam.ac.uk, Office365 XOAUTH2), Gmail
-  (williamjameshandley@gmail.com), PolyChord (will.handley@polychord.co.uk),
-  HandleyLab (handleylab@gmail.com). Dormant: BrandRadar, CambridgeMachines.
-- **Index**: one notmuch DB at `~/mail`, 190,713 messages,
-  `maildir.synchronize_flags=true`, no custom tagging.
-- **Send**: msmtp configured for all six identities including both
-  williamjameshandley@gmail.com and wh260@cam.ac.uk — iMIP replies and gated
-  sends can go out as whichever identity received the mail. Send-as-you was
-  never a blocker.
-- **Wrapper**: mcp-handley-lab `email` module (~4k LOC: notmuch read/update,
-  mutt-gated send, offlineimap sync, MIME/HTML extraction) — the pre-alan MCP
-  surface this programme supersedes.
-- **Hermes auth (surveyed in detail)**: TWO independent token stores for the
-  one account. offlineimap carries an inline `oauth2_refresh_token` minted by
-  an interactive MSAL flow (UvA-FNWI M365-IMAP `get_token.py`, Thunderbird's
-  public client id) and manually pasted into the config. Verified against
-  Microsoft's docs: Entra refresh tokens live 90 days, and every redemption
-  returns a *replacement* token carrying a fresh 90-day window — so a client
-  that persists replacements rolls forever, while offlineimap's static pasted
-  token burns its fixed 90-day fuse even under constant use. That is the
-  re-login cadence. msmtp separately runs `mutt_oauth2.py` against its own
-  token file, which *does* persist replacements. The fix shape for interest
-  9: one self-rotating token store (mutt_oauth2.py or an msal cache) serving
-  both directions — offlineimap.conf documents `oauth2_access_token_eval` /
-  `oauth2_refresh_token_eval` pythonfile hooks for exactly this, and
-  `~/.offlineimap.py` already contains an unused `get_oauth2_token()` helper.
-  One Raven login per genuine expiry, config not code.
-
-## Rulings (2026-07-06, second day)
-
-- **Total gating.** ALL outbound mail gates through Will — even mail from an
-  agent's own account. No agent-reachable send credential exists for any
-  identity. This deletes the "secretary norms" policy layer entirely: no
-  important-vs-routine recipient classification, no per-identity allowlists.
-  One invariant, uniformly enforced; the approval friction is itself the rate
-  limiter — the right amount of agent mail gets sent because sending costs
-  Will's attention.
-- **Agent addresses are service identity, not correspondence.**
-  `<agent-name>@alan2.ai` (assumed domain) exists so agents can hold accounts
-  on GitHub and similar — enabling agent-authored pull requests — with the
-  mailbox receiving signup confirmations, notifications, CI mail. Agent-sent
-  human correspondence, especially cold, is an **anti-pattern**: people feel
-  funny receiving mail from a secretary. In-context exceptions (a send during
-  a meeting) are fine but are not a use case to design for. Provisioning is
-  phase two; the substrate is shaped so each new address is one sync stanza +
-  one credential + one msmtp account.
-
-## Rulings (2026-07-05, post-founding, same day)
-
-- **Mail migrates to lovelace as part of this work.** The boltzmann transport
-  is ~a decade mature and is the *seed*, not the constraint: those configs are
-  built for human-driven use; the lovelace setup is agent-first and may
-  re-tool where genuinely better. The Maildir seeds by rsync from boltzmann —
-  no overnight re-download, no rate-limit exposure for the archive.
-- **Sync cadence**: a proper systemd unit, effectively continuous — hourly is
-  not enough, and Will will never look at this box's mail directly. Respect
-  the university's M365 IMAP rate limiting (historically: initial sync =
-  overnight, `offlineimap -o1` single-threaded; the full-folder sweep is
-  painfully slow). Optimising the sync setup is explicitly valuable.
-- **Alan's own address is decided**, not exploratory (alan-work#13) — folded
-  into this programme.
-- **Don't overfit on the existing agentic machinery.** The cockpit is alpha;
-  the morning brief has never actually been used; alan-*/mdcal/mddb patterns
-  are days old and not precedent-setting — where a better shape exists, take
-  it. The interests in this document are the fixed points, not the code.
-- **Code philosophy, binding across every repo this touches**: lean code, no
-  defensive programming, the fewest elegant lines that implement the
-  interests — optimised for future agents reasoning over it.
-
-## Scope
-
-| concern | home |
-|---|---|
-| draft cards, learning ledger, capability-separated send gate | **mddraft** (this repo) |
-| verbatim approval surface (PWA) | alan-work (via alan-pwa) |
-| inbound triage agent: continuous sync, interrupt tier, digest, brief feed | alan-work |
-| notmuch tagging substrate | alan-work issue; config is ops |
-| Alan's own address + secretary policy | alan-work |
-| M365/Raven auth streamlining | alan-work issue; config is ops |
-| outbound iMIP calendar invites (consume the send gate) | mdcal (#8) |
-| IMAP/storage/search/transport | existing stack, migrated to lovelace; re-tooling allowed where genuinely better (see Rulings) |
-
-## Non-goals
-
-- Not a mail client, not a mail store, not a notmuch replacement.
-- No copying of the mail archive into cards; no markdown-ification of email.
-- No code path by which an agent can flush the outbox. If a change would
-  create one, the change is wrong.
-
-## Naming
-
-`mddraft`: the repo's entire card content is markdown drafts, so the `md*`
-family prefix is earned, not cosmetic. PyPI name claimed 2026-07-05 alongside
-mddb and mdcal (both Handley Research Group).
+An ambiguous transport result remains ambiguous. `reconcile` compares later mail
+observations with the approved bytes; it does not invent success or repeat a send
+whose outcome is unknown.
