@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mddraft"
-version = "0.0.9"
+version = "0.0.10"
 description = "Email drafting and gated sending over the mddb card substrate"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -14,7 +14,7 @@ authors = [
     {name = "Handley Research Group", email = "wh260@cam.ac.uk"}
 ]
 keywords = ["email", "drafting", "agents", "yaml", "markdown", "mddb"]
-dependencies = ["mddb"]
+dependencies = ["mddb>=0.0.26"]
 classifiers = [
     "Development Status :: 1 - Planning",
     "Intended Audience :: Developers",

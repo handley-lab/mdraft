@@ -18,7 +18,6 @@ from email.parser import BytesParser
 from email.policy import SMTP
 from email.policy import default as DEFAULT
 from email.utils import formataddr, make_msgid
-from pathlib import Path
 
 import mddb
 
@@ -104,40 +103,20 @@ def _authored_digest(payload):
             [
                 part.get_content_type(),
                 part.get_filename() or "",
-                hashlib.sha256(data if data is not None else part.as_bytes()).hexdigest(),
+                hashlib.sha256(
+                    data if data is not None else part.as_bytes()
+                ).hexdigest(),
             ]
         )
     canonical = json.dumps(authored, ensure_ascii=False, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-def _at(deck, card_id, sha):
-    paths = subprocess.run(
-        ["git", "-C", str(deck), "ls-tree", "-r", "-z", "--name-only", sha],
-        capture_output=True,
-        check=True,
-        text=True,
-    ).stdout.split("\0")
-    for relpath in paths:
-        if not relpath.endswith(".md"):
-            continue
-        text = subprocess.run(
-            ["git", "-C", str(deck), "show", f"{sha}:{relpath}"],
-            capture_output=True,
-            check=True,
-            text=True,
-        ).stdout
-        card = mddb.Card.from_text(text)
-        if card.id == card_id:
-            return card, relpath
-    raise KeyError(card_id)
-
-
 def at(deck, card_id, sha):
     """Read a card's content as it existed at a commit.
 
-    Resolves ``card_id`` inside the pinned tree, so a later move or deletion
-    cannot change the object approved at ``sha``.
+    Thin alias for :meth:`mddb.MDDB.at` — the approval display and the flush
+    must share one immutable object, and the substrate owns that read.
 
     Args:
         deck: Path to the (trusted) mddb deck.
@@ -148,21 +127,16 @@ def at(deck, card_id, sha):
         The Card parsed from the bytes at ``sha`` — immutable with respect to
         any later working-tree or HEAD change.
     """
-    return _at(deck, card_id, sha)[0]
+    return mddb.MDDB(deck).at(card_id, sha)
 
 
 def attachments(deck, card, sha):
     """Return ordered ``(attachment card, pinned bytes)`` pairs."""
-    result = []
-    for card_id in card.yaml.get("attachments", []):
-        attachment, relpath = _at(deck, card_id, sha)
-        data = subprocess.run(
-            ["git", "-C", str(deck), "show", f"{sha}:{Path(relpath).with_suffix('.bin')}"],
-            capture_output=True,
-            check=True,
-        ).stdout
-        result.append((attachment, data))
-    return result
+    db = mddb.MDDB(deck)
+    return [
+        (db.at(card_id, sha), db.blob_at(card_id, sha))
+        for card_id in card.yaml.get("attachments", [])
+    ]
 
 
 def compose(card, mid="", attachment_data=(), realname=""):
