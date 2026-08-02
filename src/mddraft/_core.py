@@ -69,6 +69,15 @@ class AmbiguousSend(RuntimeError):
 
 
 def _stamp(db, card_id, values, rationale):
+    """Write ``values`` onto the card, retrying until a concurrent writer lets it.
+
+    Unbounded on purpose. The stamp after transport is what records ``sent_mid``;
+    if it gave up, the mail would be on the wire with nothing on the card saying
+    so, and the next flush would send it again. Spinning against a conflicting
+    writer is the lesser failure. Bounded retry belongs where a conflict can be
+    surfaced to a caller who may retry — a request handler — not here, after the
+    irreversible act.
+    """
     while True:
         try:
             with db.editor(rationale=rationale) as editor:
