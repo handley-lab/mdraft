@@ -1,5 +1,8 @@
 # mddraft
 
+Correct, minimal documentation is best. Omission is preferable to an
+unsupported or obsolete claim. Incorrect documentation is worst.
+
 Email drafting and gated sending over the [mddb](https://github.com/handley-lab/mddb)
 card substrate — the outbound half of bringing email into an agentic system.
 
@@ -16,21 +19,24 @@ duplicated — cards reference the mail store (notmuch) by Message-ID.
 
 ## Library
 
-Four names over [mddb](https://github.com/handley-lab/mddb), stdlib otherwise:
+The public surface is `mddraft.__all__`:
 
 - `ENVELOPE_DOC` — the draft-card envelope convention (documented, never
   validated).
+- `AlreadySent` / `AmbiguousSend` — explicit indeterminate or terminal send
+  outcomes.
 - `at(deck, card_id, sha)` — a card's content as it existed at a commit; the
   approval display and the flush share this one immutable read.
-- `compose(card, mid="")` — draft card → `email.message.EmailMessage`.
+- `attachments(...)` — immutable attachment bytes at the approved commit.
+- `compose(card, mid="", ...)` — draft card to `email.message.EmailMessage`.
 - `flush(deck, card_id, sha, msmtp=("msmtp",))` — send the bytes at `sha`
   (msmtp invoked exactly once) and stamp `sent_mid`/`sent_sha`/`sent_at`.
+- `reconcile(...)` — resolve observations after an indeterminate send.
+- `reply(...)` / `forward(...)` — pure correspondence constructors.
 
 The gate — who may call `flush`, as which user, behind which token — is
 tenancy wiring, deliberately not in this library.
 
-## Status
-
-Library core built; the gate, approval PWA, and mail substrate land in the
-tenancy repos. See `DESIGN.md` for the founding interests and `CLAUDE.md` for
-the working rules.
+The gate, approval PWA, and mail substrate are deployment concerns in tenancy
+repositories. See `DESIGN.md` for the durable rationale and `CLAUDE.md` for
+repository rules.
