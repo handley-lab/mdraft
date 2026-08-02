@@ -24,6 +24,7 @@ def deck(tmp_path):
                 "subject": "Re: referee report",
                 "in_reply_to": "<orig@example.org>",
                 "references": ["<root@example.org>", "<orig@example.org>"],
+                "kind": "draft",
                 "state": "draft",
             },
             body="Dear Smith,\n\nI must decline.\n\nWill\n",
@@ -298,6 +299,7 @@ def test_scalar_references_fail_before_msmtp(tmp_path, fake_msmtp):
             title="bad references",
             summary="must not send",
             yaml={
+                "kind": "draft",
                 "to": ["a@example.org"],
                 "from": "me@example.org",
                 "subject": "bad references",
@@ -329,6 +331,7 @@ def attachment_deck(tmp_path, attachment_rows):
             title="message with files",
             summary="attachment test",
             yaml={
+                "kind": "draft",
                 "to": ["a@example.org"],
                 "from": "me@example.org",
                 "subject": "files",
@@ -597,3 +600,44 @@ def test_flush_stamp_conflict_retries_without_resending(deck, fake_msmtp, monkey
     assert log.read_text().count("CALL") == 1
     stamped = mddb.MDDB(db.root).read(card_id)
     assert stamped.yaml["sent_mid"] == mid
+
+
+def test_flush_refuses_a_card_of_another_kind(tmp_path, fake_msmtp):
+    """An addressable-looking card that mddraft does not own is never sent."""
+    db = mddb.MDDB.init(tmp_path / "foreign")
+    with db.editor(rationale="a task that happens to carry addresses") as editor:
+        card = editor.create(
+            title="Email Smith about the report",
+            summary="looks addressable, is a task",
+            kind="task",
+            yaml={
+                "status": "next",
+                "to": ["smith@example.org"],
+                "from": "wh260@cam.ac.uk",
+                "subject": "report",
+            },
+            body="body\n",
+        )
+    script, log = fake_msmtp
+    with pytest.raises(ValueError, match="is not a draft"):
+        mddraft.flush(db.root, card.id, db.head(), msmtp=(str(script),))
+    assert not log.exists()
+
+
+def test_flush_refuses_a_kindless_card(tmp_path, fake_msmtp):
+    db = mddb.MDDB.init(tmp_path / "kindless")
+    with db.editor(rationale="a card no layer owns") as editor:
+        card = editor.create(
+            title="orphan",
+            summary="no kind",
+            yaml={
+                "to": ["a@example.org"],
+                "from": "me@example.org",
+                "subject": "orphan",
+            },
+            body="body\n",
+        )
+    script, log = fake_msmtp
+    with pytest.raises(ValueError, match="kind None is not a draft"):
+        mddraft.flush(db.root, card.id, db.head(), msmtp=(str(script),))
+    assert not log.exists()

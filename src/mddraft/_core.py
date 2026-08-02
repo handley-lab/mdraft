@@ -26,6 +26,13 @@ ENVELOPE_DOC = """\
 Draft-card envelope convention (documented, never validated — the caller
 constructs the calls; compose() raises KeyError on missing required keys):
 
+  kind: draft            required — the substrate filing key that makes a card
+                         this layer's. flush() refuses any other kind, so a
+                         card that merely looks addressable is never sent.
+                         The outbox deck also holds kind: attachment (ordered
+                         payload cards, read by attachments()) and
+                         kind: calendar-invitation (invite proposals the
+                         Outbox renders); neither is ever flushed
   to: [addr, ...]        required at flush
   cc: [addr, ...]        optional
   from: <address>        required — must equal an msmtp account name; selects
@@ -35,7 +42,10 @@ constructs the calls; compose() raises KeyError on missing required keys):
   references: ["<mid>", ...]   optional; threading
   attachments: [card-id, ...]  optional; ordered immutable attachment cards
   state: draft | abandoned     workflow convention; inert data — nothing
-                         triggers on it (approval is an act, not a field)
+                         triggers on it (approval is an act, not a field).
+                         Distinct from mdgtd's status: this is the outbox
+                         workflow marker the approval UI reads, not a
+                         lifecycle vocabulary
   sent_mid / sent_sha / sent_at   stamped by flush() and only meaningful when
                          flush stamped them
 
@@ -289,18 +299,24 @@ def flush(
         The Message-ID of the sent mail (notmuch holds the product).
 
     Raises:
+        ValueError: The card is not ``kind: draft``, at HEAD or at ``sha``.
         AlreadySent: The card at HEAD already carries a sent_mid.
         AmbiguousSend: A prior attempt crossed the durable send boundary.
         subprocess.CalledProcessError: msmtp exited nonzero; the committed
             attempt remains ambiguous and cannot be automatically retried.
     """
     db = mddb.MDDB(deck)
-    head_yaml = db.read(card_id).yaml
+    head_card = db.read(card_id)
+    if head_card.kind != "draft":
+        raise ValueError(f"card {card_id}: kind {head_card.kind!r} is not a draft")
+    head_yaml = head_card.yaml
     if "sent_mid" in head_yaml:
         raise AlreadySent(head_yaml["sent_mid"])
     if head_yaml.get("send_state") == "ambiguous":
         raise AmbiguousSend(head_yaml["send_mid"])
     card = at(deck, card_id, sha)
+    if card.kind != "draft":
+        raise ValueError(f"card {card_id} at {sha}: kind {card.kind!r} is not a draft")
     sender = card.yaml["from"]
     mid = make_msgid(domain=sender.split("@")[1])
     msg = compose(
