@@ -37,10 +37,11 @@ constructs the calls; compose() raises KeyError on missing required keys):
   in_reply_to: "<mid>"   optional; threading
   references: ["<mid>", ...]   optional; threading
   attachments: [card-id, ...]  optional; ordered immutable attachment cards
-  status: draft | abandoned    workflow convention; inert data — nothing
+  state: draft | abandoned     workflow convention; inert data — nothing
                          triggers on it (approval is an act, not a field).
-                         The bare name is unambiguous because kind says which
-                         vocabulary owns the card
+                         Distinct from mdgtd's status: this is the outbox
+                         workflow marker the approval UI reads, not a
+                         lifecycle vocabulary
   sent_mid / sent_sha / sent_at   stamped by flush() and only meaningful when
                          flush stamped them
 
@@ -347,7 +348,7 @@ def flush(
     if after_transport:
         after_transport(payload)
     stamp = {
-        "status": "sent",
+        "state": "sent",
         "sent_mid": mid,
         "sent_sha": sha,
         "sent_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
@@ -378,7 +379,7 @@ def reconcile(deck, card_id, observations):
             f"found {len(observations)} observations and {len(matches)} matches"
         )
     stamp = {
-        "status": "sent",
+        "state": "sent",
         "send_state": "sent",
         "sent_mid": card.yaml["send_mid"],
         "sent_sha": card.yaml["approved_sha"],

@@ -25,7 +25,7 @@ def deck(tmp_path):
                 "in_reply_to": "<orig@example.org>",
                 "references": ["<root@example.org>", "<orig@example.org>"],
                 "kind": "draft",
-                "status": "draft",
+                "state": "draft",
             },
             body="Dear Smith,\n\nI must decline.\n\nWill\n",
         )
@@ -436,7 +436,7 @@ def test_flush_sends_and_stamps(deck, fake_msmtp):
     assert "Dear Smith," in wire
     assert mid in wire
     stamped = mddb.MDDB(db.root).read(card_id)
-    assert stamped.yaml["status"] == "sent"
+    assert stamped.yaml["state"] == "sent"
     assert stamped.yaml["sent_mid"] == mid
     assert stamped.yaml["sent_sha"] == sha
     assert "sent_at" in stamped.yaml
