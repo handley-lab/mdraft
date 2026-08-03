@@ -26,10 +26,10 @@ def test_reply_matches_mutt_shape_and_threading():
         "Hi Will\nI have approved this.",
         "wh260@cam.ac.uk",
         "Hi Sarah,\n\nThank you.",
-        footer="-- \nWill Handley",
     )
     assert envelope == {
         "kind": "draft",
+        "state": "draft",
         "from": "wh260@cam.ac.uk",
         "to": ['"Senior Bursar (Sarah Tebbutt)" <senior.bursar@cai.cam.ac.uk>'],
         "subject": "RE: Paternity leave",
@@ -130,10 +130,10 @@ def test_forward_matches_mutt_inline_shape_and_has_no_threading():
         "wh260@cam.ac.uk",
         "For your information.",
         recipients=("colleague@example.org",),
-        footer="-- \nWill Handley",
     )
     assert envelope == {
         "kind": "draft",
+        "state": "draft",
         "from": "wh260@cam.ac.uk",
         "to": ["colleague@example.org"],
         "subject": "Fwd: Project descriptions",
@@ -152,3 +152,20 @@ def test_prefixes_are_not_duplicated_case_insensitively():
     )
     assert mddraft.reply(reply_source, "x", "me@example.org", "y")[0]["subject"] == "re: topic"
     assert mddraft.forward(forward_source, "x", "me@example.org", "y")[0]["subject"] == "FWD: topic"
+
+
+def test_compose_stamps_complete_envelope():
+    envelope, body = mddraft.compose(
+        "wh260@cam.ac.uk",
+        ["a@example.org"],
+        "Group computing receipts -- Codex chase",
+        "Hi A,\n\nCould you forward the missing receipts?\n\nBest,\nWill",
+    )
+    assert envelope == {
+        "kind": "draft",
+        "state": "draft",
+        "from": "wh260@cam.ac.uk",
+        "to": ["a@example.org"],
+        "subject": "Group computing receipts -- Codex chase",
+    }
+    assert body.endswith("Best,\nWill\n")

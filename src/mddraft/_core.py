@@ -1,8 +1,8 @@
-"""Draft cards over mddb and the msmtp flush: at, compose, flush.
+"""Draft cards over mddb and the msmtp flush: at, render, flush.
 
-The library is the substrate half of gated email sending. It renders a draft
+The library is the substrate half of gated email sending. It reads a draft
 card at a pinned git sha (so approval display and flush share one immutable
-object), composes it to RFC822, and hands the bytes to msmtp exactly once.
+object), renders it to RFC822, and hands the bytes to msmtp exactly once.
 The gate itself — who may call flush, under which user, behind which token —
 is tenancy wiring, deliberately outside this library.
 """
@@ -13,6 +13,7 @@ import subprocess
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import SMTP
@@ -23,7 +24,7 @@ import mddb
 
 ENVELOPE_DOC = """\
 Draft-card envelope convention (documented, never validated — the caller
-constructs the calls; compose() raises KeyError on missing required keys):
+constructs the calls; render() raises KeyError on missing required keys):
 
   kind: draft            required — the substrate filing key that makes a card
                          this layer's. flush() refuses any other kind, so a
@@ -51,13 +52,17 @@ constructs the calls; compose() raises KeyError on missing required keys):
 bcc is deliberately absent from v1: envelope-vs-header semantics with
 ``msmtp -t`` are a trap, deferred until actually needed.
 
-Body = the exact plain-text email body, one unwrapped line per paragraph —
-the wire carries it verbatim (quoted-printable) and clients wrap to their
-own width; generator-side soft-wrapping is what Outlook's remove-extra-
-line-breaks heuristic mangles. The mutt signature convention holds: footer
-preceded by a lone ``-- `` line. Sent mail is never copied into cards:
-notmuch holds the product, sent_mid references it.
+Body = the plain-text email body, one unwrapped line per paragraph — the
+wire carries it verbatim (quoted-printable) and clients wrap to their own
+width; generator-side soft-wrapping is what Outlook's remove-extra-
+line-breaks heuristic mangles. Bodies carry no signature: flush() appends
+the sending identity's footer from ``/etc/mddraft/footers/<from>`` (trusted
+gate config, agent-unwritable like msmtprc) after a lone ``-- `` line, per
+the mutt convention. Sent mail is never copied into cards: notmuch holds
+the product, sent_mid references it.
 """
+
+FOOTERS_DIR = Path("/etc/mddraft/footers")
 
 
 class AlreadySent(RuntimeError):
@@ -148,8 +153,8 @@ def attachments(deck, card, sha):
     ]
 
 
-def compose(card, mid="", attachment_data=(), realname=""):
-    """Compose a draft card into an RFC822 message.
+def render(card, mid="", attachment_data=(), realname=""):
+    """Render a draft card into an RFC822 message.
 
     Pure and deterministic: no I/O, no clock, no defaults invented — the
     same card and mid always yield the same bytes. Send-time metadata (the
@@ -301,8 +306,13 @@ def flush(
     if card.kind != "draft":
         raise ValueError(f"card {card_id} at {sha}: kind {card.kind!r} is not a draft")
     sender = card.yaml["from"]
+    footer_path = FOOTERS_DIR / sender
+    if footer_path.is_file():
+        card.body = (
+            card.body.rstrip("\n") + "\n\n-- \n" + footer_path.read_text().rstrip("\n") + "\n"
+        )
     mid = make_msgid(domain=sender.split("@")[1])
-    msg = compose(
+    msg = render(
         card,
         mid,
         attachments(deck, card, sha),

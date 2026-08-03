@@ -22,8 +22,22 @@ def _body(*sections):
     return "\n\n".join(section.rstrip("\n") for section in sections if section) + "\n"
 
 
+def compose(sender, recipients, subject, text, *, cc=()):
+    """Return ``(envelope, body)`` for a fresh composition."""
+    envelope = {
+        "kind": "draft",
+        "state": "draft",
+        "from": sender,
+        "to": list(recipients),
+        "subject": subject,
+    }
+    if cc:
+        envelope["cc"] = list(cc)
+    return envelope, _body(text)
+
+
 def reply(
-    message, source_text, sender, text, *, reply_all=False, own_addresses=(), footer=""
+    message, source_text, sender, text, *, reply_all=False, own_addresses=()
 ):
     """Return ``(envelope, body)`` for a reply to ``message``."""
     target = message.get_all("Reply-To") or message.get_all("From", [])
@@ -52,6 +66,7 @@ def reply(
         references.append(mid)
     envelope = {
         "kind": "draft",
+        "state": "draft",
         "from": sender,
         "to": to,
         "subject": _subject(message["Subject"], "Re: "),
@@ -62,10 +77,10 @@ def reply(
         envelope["cc"] = cc
     quoted = "\n".join("> " + line for line in source_text.rstrip("\n").split("\n"))
     attribution = f"On {message['Date']}, {message['From']} wrote:"
-    return envelope, _body(text, attribution + "\n" + quoted, footer)
+    return envelope, _body(text, attribution + "\n" + quoted)
 
 
-def forward(message, source_text, sender, text, *, recipients=(), footer=""):
+def forward(message, source_text, sender, text, *, recipients=()):
     """Return ``(envelope, body)`` for an inline Mutt-shaped forward."""
     intro = f"----- Forwarded message from {message['From']} -----"
     headers = []
@@ -76,8 +91,9 @@ def forward(message, source_text, sender, text, *, recipients=(), footer=""):
     trailer = "----- End forwarded message -----"
     envelope = {
         "kind": "draft",
+        "state": "draft",
         "from": sender,
         "to": list(recipients),
         "subject": _subject(message["Subject"], "Fwd: "),
     }
-    return envelope, _body(text, forwarded, trailer, footer)
+    return envelope, _body(text, forwarded, trailer)
