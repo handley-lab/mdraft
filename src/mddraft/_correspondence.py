@@ -22,6 +22,20 @@ def _body(*sections):
     return "\n\n".join(section.rstrip("\n") for section in sections if section) + "\n"
 
 
+def compose(sender, recipients, subject, text, *, cc=()):
+    """Return ``(envelope, body)`` for a fresh composition."""
+    envelope = {
+        "kind": "draft",
+        "state": "draft",
+        "from": sender,
+        "to": list(recipients),
+        "subject": subject,
+    }
+    if cc:
+        envelope["cc"] = list(cc)
+    return envelope, _body(text)
+
+
 def reply(
     message, source_text, sender, text, *, reply_all=False, own_addresses=()
 ):
@@ -52,6 +66,7 @@ def reply(
         references.append(mid)
     envelope = {
         "kind": "draft",
+        "state": "draft",
         "from": sender,
         "to": to,
         "subject": _subject(message["Subject"], "Re: "),
@@ -76,6 +91,7 @@ def forward(message, source_text, sender, text, *, recipients=()):
     trailer = "----- End forwarded message -----"
     envelope = {
         "kind": "draft",
+        "state": "draft",
         "from": sender,
         "to": list(recipients),
         "subject": _subject(message["Subject"], "Fwd: "),

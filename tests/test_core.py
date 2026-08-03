@@ -112,9 +112,9 @@ def verify_signed(wire, tmp_path):
     return body
 
 
-def test_compose_full_envelope(deck):
+def test_render_full_envelope(deck):
     db, card_id = deck
-    msg = mddraft.compose(db.read(card_id), mid="<mid@cam.ac.uk>")
+    msg = mddraft.render(db.read(card_id), mid="<mid@cam.ac.uk>")
     assert msg["From"] == "wh260@cam.ac.uk"
     assert msg["To"] == "smith@example.org"
     assert msg["Cc"] == "jones@example.org"
@@ -125,7 +125,7 @@ def test_compose_full_envelope(deck):
     assert msg.get_content() == "Dear Smith,\n\nI must decline.\n\nWill\n"
 
 
-def test_compose_keeps_paragraphs_unwrapped_on_the_wire(tmp_path):
+def test_render_keeps_paragraphs_unwrapped_on_the_wire(tmp_path):
     body = (
         "word " * 300 + "one unwrapped paragraph\n"
         "\n"
@@ -136,13 +136,13 @@ def test_compose_keeps_paragraphs_unwrapped_on_the_wire(tmp_path):
         yaml={"to": ["a@example.org"], "from": "wh260@cam.ac.uk", "subject": "wire"},
         body=body,
     )
-    msg = mddraft.compose(card)
+    msg = mddraft.render(card)
     assert msg["Content-Transfer-Encoding"] == "quoted-printable"
     assert msg.get_content() == body
     assert max(len(line) for line in bytes(msg).splitlines()) <= 998
 
 
-def test_compose_fresh_mail_omits_threading_and_cc(tmp_path):
+def test_render_fresh_mail_omits_threading_and_cc(tmp_path):
     card = mddb.Card(
         yaml={
             "to": ["a@example.org"],
@@ -151,18 +151,18 @@ def test_compose_fresh_mail_omits_threading_and_cc(tmp_path):
         },
         body="hi\n",
     )
-    msg = mddraft.compose(card)
+    msg = mddraft.render(card)
     assert "Cc" not in msg
     assert "In-Reply-To" not in msg
     assert "References" not in msg
     assert "Message-ID" not in msg
 
 
-def test_compose_is_deterministic(deck):
+def test_render_is_deterministic(deck):
     db, card_id = deck
     card = db.read(card_id)
-    assert bytes(mddraft.compose(card, "<m@x>")) == bytes(mddraft.compose(card, "<m@x>"))
-    assert "Date" not in mddraft.compose(card, "<m@x>")
+    assert bytes(mddraft.render(card, "<m@x>")) == bytes(mddraft.render(card, "<m@x>"))
+    assert "Date" not in mddraft.render(card, "<m@x>")
 
 
 def test_flush_stamps_date_on_the_wire(deck, fake_msmtp):
@@ -287,9 +287,9 @@ def test_gpg_failure_sends_and_commits_nothing(deck, fake_msmtp):
     assert mddb.MDDB(db.root).head() == sha
 
 
-def test_compose_missing_envelope_raises_keyerror():
+def test_render_missing_envelope_raises_keyerror():
     with pytest.raises(KeyError):
-        mddraft.compose(mddb.Card(yaml={"to": ["a@example.org"]}, body="hi"))
+        mddraft.render(mddb.Card(yaml={"to": ["a@example.org"]}, body="hi"))
 
 
 def test_scalar_references_fail_before_msmtp(tmp_path, fake_msmtp):
@@ -361,7 +361,7 @@ def test_payload_attachment_roundtrips_from_pinned_commit(tmp_path):
     selected = mddraft.attachments(db.root, card, sha)
     attachment = db.read(card.yaml["attachments"][0])
     attachment.blob.write_bytes(b"changed after approval")
-    part = next(mddraft.compose(card, attachment_data=selected).iter_attachments())
+    part = next(mddraft.render(card, attachment_data=selected).iter_attachments())
     assert part.get_filename() == "archive.tar.gz"
     assert part.get_content_type() == "application/octet-stream"
     assert part.get_payload(decode=True) == b"original bytes"
@@ -401,7 +401,7 @@ def test_message_and_multipart_entity_attachments_roundtrip(tmp_path):
         ],
     )
     card = mddraft.at(db.root, card_id, db.head())
-    msg = mddraft.compose(
+    msg = mddraft.render(
         card, attachment_data=mddraft.attachments(db.root, card, db.head())
     )
     message_part, entity_part = msg.iter_attachments()

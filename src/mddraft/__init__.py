@@ -12,22 +12,23 @@ from mddraft._core import (
     AmbiguousSend,
     at,
     attachments,
-    compose,
+    render,
     flush,
     reconcile,
 )
-from mddraft._correspondence import forward, reply
+from mddraft._correspondence import compose, forward, reply
 
-__version__ = "0.0.11"
+__version__ = "0.0.12"
 __all__ = [
     "ENVELOPE_DOC",
     "AlreadySent",
     "AmbiguousSend",
     "at",
     "attachments",
-    "compose",
+    "render",
     "flush",
     "reconcile",
+    "compose",
     "forward",
     "reply",
 ]

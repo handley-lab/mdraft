@@ -1,8 +1,8 @@
-"""Draft cards over mddb and the msmtp flush: at, compose, flush.
+"""Draft cards over mddb and the msmtp flush: at, render, flush.
 
-The library is the substrate half of gated email sending. It renders a draft
+The library is the substrate half of gated email sending. It reads a draft
 card at a pinned git sha (so approval display and flush share one immutable
-object), composes it to RFC822, and hands the bytes to msmtp exactly once.
+object), renders it to RFC822, and hands the bytes to msmtp exactly once.
 The gate itself — who may call flush, under which user, behind which token —
 is tenancy wiring, deliberately outside this library.
 """
@@ -24,7 +24,7 @@ import mddb
 
 ENVELOPE_DOC = """\
 Draft-card envelope convention (documented, never validated — the caller
-constructs the calls; compose() raises KeyError on missing required keys):
+constructs the calls; render() raises KeyError on missing required keys):
 
   kind: draft            required — the substrate filing key that makes a card
                          this layer's. flush() refuses any other kind, so a
@@ -153,8 +153,8 @@ def attachments(deck, card, sha):
     ]
 
 
-def compose(card, mid="", attachment_data=(), realname=""):
-    """Compose a draft card into an RFC822 message.
+def render(card, mid="", attachment_data=(), realname=""):
+    """Render a draft card into an RFC822 message.
 
     Pure and deterministic: no I/O, no clock, no defaults invented — the
     same card and mid always yield the same bytes. Send-time metadata (the
@@ -312,7 +312,7 @@ def flush(
             card.body.rstrip("\n") + "\n\n-- \n" + footer_path.read_text().rstrip("\n") + "\n"
         )
     mid = make_msgid(domain=sender.split("@")[1])
-    msg = compose(
+    msg = render(
         card,
         mid,
         attachments(deck, card, sha),
