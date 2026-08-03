@@ -670,3 +670,34 @@ def test_flush_without_footer_config_sends_body_verbatim(
     wire = wire_message(log)
     parsed = message_from_bytes(wire, policy=default_policy)
     assert "-- " not in parsed.get_content()
+
+
+def test_flush_never_double_footers_a_body_with_embedded_footer(
+    tmp_path, fake_msmtp, monkeypatch
+):
+    db = mddb.MDDB.init(tmp_path / "outbox")
+    with db.editor(rationale="draft: legacy embedded footer") as editor:
+        card = editor.create(
+            title="legacy",
+            summary="footer already in body",
+            yaml={
+                "to": ["a@example.org"],
+                "from": "wh260@cam.ac.uk",
+                "subject": "legacy",
+                "kind": "draft",
+                "state": "draft",
+            },
+            body="Hi,\n\n> -- \n> quoted signature stays harmless\n\nBest,\nWill\n\n-- \nOld Embedded Footer\n",
+        )
+    footers = tmp_path / "footers"
+    footers.mkdir()
+    (footers / "wh260@cam.ac.uk").write_text("Gate Footer\n")
+    monkeypatch.setattr(mddraft._core, "FOOTERS_DIR", footers)
+    script, log = fake_msmtp
+    mddraft.flush(db.root, card.id, db.head(), msmtp=(str(script),))
+    wire = wire_message(log)
+    parsed = message_from_bytes(wire, policy=default_policy)
+    content = parsed.get_content().replace("\r\n", "\n")
+    assert content.count("\n-- \n") == 1
+    assert "Gate Footer" not in content
+    assert content.endswith("-- \nOld Embedded Footer\n")
