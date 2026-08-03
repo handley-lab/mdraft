@@ -26,7 +26,6 @@ def test_reply_matches_mutt_shape_and_threading():
         "Hi Will\nI have approved this.",
         "wh260@cam.ac.uk",
         "Hi Sarah,\n\nThank you.",
-        footer="-- \nWill Handley",
     )
     assert envelope == {
         "kind": "draft",
@@ -130,7 +129,6 @@ def test_forward_matches_mutt_inline_shape_and_has_no_threading():
         "wh260@cam.ac.uk",
         "For your information.",
         recipients=("colleague@example.org",),
-        footer="-- \nWill Handley",
     )
     assert envelope == {
         "kind": "draft",

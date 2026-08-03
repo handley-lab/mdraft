@@ -13,6 +13,7 @@ import subprocess
 import uuid
 from copy import deepcopy
 from datetime import datetime, timezone
+from pathlib import Path
 from email.message import EmailMessage
 from email.parser import BytesParser
 from email.policy import SMTP
@@ -51,13 +52,17 @@ constructs the calls; compose() raises KeyError on missing required keys):
 bcc is deliberately absent from v1: envelope-vs-header semantics with
 ``msmtp -t`` are a trap, deferred until actually needed.
 
-Body = the exact plain-text email body, one unwrapped line per paragraph —
-the wire carries it verbatim (quoted-printable) and clients wrap to their
-own width; generator-side soft-wrapping is what Outlook's remove-extra-
-line-breaks heuristic mangles. The mutt signature convention holds: footer
-preceded by a lone ``-- `` line. Sent mail is never copied into cards:
-notmuch holds the product, sent_mid references it.
+Body = the plain-text email body, one unwrapped line per paragraph — the
+wire carries it verbatim (quoted-printable) and clients wrap to their own
+width; generator-side soft-wrapping is what Outlook's remove-extra-
+line-breaks heuristic mangles. Bodies carry no signature: flush() appends
+the sending identity's footer from ``/etc/mddraft/footers/<from>`` (trusted
+gate config, agent-unwritable like msmtprc) after a lone ``-- `` line, per
+the mutt convention. Sent mail is never copied into cards: notmuch holds
+the product, sent_mid references it.
 """
+
+FOOTERS_DIR = Path("/etc/mddraft/footers")
 
 
 class AlreadySent(RuntimeError):
@@ -301,6 +306,11 @@ def flush(
     if card.kind != "draft":
         raise ValueError(f"card {card_id} at {sha}: kind {card.kind!r} is not a draft")
     sender = card.yaml["from"]
+    footer_path = FOOTERS_DIR / sender
+    if footer_path.is_file():
+        card.body = (
+            card.body.rstrip("\n") + "\n\n-- \n" + footer_path.read_text().rstrip("\n") + "\n"
+        )
     mid = make_msgid(domain=sender.split("@")[1])
     msg = compose(
         card,

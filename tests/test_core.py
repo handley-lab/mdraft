@@ -641,3 +641,32 @@ def test_flush_refuses_a_kindless_card(tmp_path, fake_msmtp):
     with pytest.raises(ValueError, match="kind None is not a draft"):
         mddraft.flush(db.root, card.id, db.head(), msmtp=(str(script),))
     assert not log.exists()
+
+
+def test_flush_appends_identity_footer_from_gate_config(
+    deck, fake_msmtp, monkeypatch, tmp_path
+):
+    db, card_id = deck
+    script, log = fake_msmtp
+    footers = tmp_path / "footers"
+    footers.mkdir()
+    (footers / "wh260@cam.ac.uk").write_text("Dr Will Handley\nUniversity of Cambridge\n")
+    monkeypatch.setattr(mddraft._core, "FOOTERS_DIR", footers)
+    mddraft.flush(db.root, card_id, db.head(), msmtp=(str(script),))
+    wire = wire_message(log)
+    parsed = message_from_bytes(wire, policy=default_policy)
+    assert parsed.get_content().replace("\r\n", "\n").endswith(
+        "\n\n-- \nDr Will Handley\nUniversity of Cambridge\n"
+    )
+
+
+def test_flush_without_footer_config_sends_body_verbatim(
+    deck, fake_msmtp, monkeypatch, tmp_path
+):
+    db, card_id = deck
+    script, log = fake_msmtp
+    monkeypatch.setattr(mddraft._core, "FOOTERS_DIR", tmp_path / "footers")
+    mddraft.flush(db.root, card_id, db.head(), msmtp=(str(script),))
+    wire = wire_message(log)
+    parsed = message_from_bytes(wire, policy=default_policy)
+    assert "-- " not in parsed.get_content()
