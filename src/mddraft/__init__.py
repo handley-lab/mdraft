@@ -18,7 +18,7 @@ from mddraft._core import (
 )
 from mddraft._correspondence import compose, forward, reply, source_text
 
-__version__ = "0.0.12"
+__version__ = "0.0.13"
 __all__ = [
     "ENVELOPE_DOC",
     "AlreadySent",
