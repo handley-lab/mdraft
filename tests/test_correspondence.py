@@ -333,3 +333,19 @@ def test_a_footer_reflowed_onto_one_line_is_still_ours(monkeypatch, tmp_path):
     _, body = mddraft.reply(source, "wh260@cam.ac.uk", "Noted.")
     assert "Royal Society" not in body
     assert "> Thanks for confirming." in body
+
+
+def test_the_text_transforms_are_callable_on_their_own(monkeypatch, tmp_path):
+    """Mutt filters the same text without a MIME tree to hand to source_text()."""
+    footers = tmp_path / "footers"
+    footers.mkdir()
+    (footers / "wh260@cam.ac.uk").write_text("\nDr Will Handley\nInstitute of Astronomy\n")
+    monkeypatch.setattr(mddraft._core, "FOOTERS_DIR", footers)
+    wrapped = (
+        "https://eur03.safelinks.protection.outlook.com/?url="
+        "https%3A%2F%2Fexample.org%2Fa.pdf&data=05%7C02%7Cwh260"
+    )
+    assert mddraft.unwrap_safelinks(wrapped) == "https://example.org/a.pdf"
+    assert mddraft.strip_own_footers(
+        "Thanks.\n\n-- \n\nDr Will Handley\nInstitute of Astronomy\n"
+    ) == "Thanks.\n"

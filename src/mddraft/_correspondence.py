@@ -33,7 +33,7 @@ def _body(*sections):
     return "\n\n".join(section.rstrip("\n") for section in sections if section) + "\n"
 
 
-def _unwrap_safelinks(text):
+def unwrap_safelinks(text):
     """Restore the real URL from Outlook's SafeLinks wrapper.
 
     Correspondence through Exchange arrives with every link rewritten to a
@@ -93,7 +93,7 @@ def _footer_run(lines, start, footer):
     return index if matched > 1 else None
 
 
-def _strip_own_footers(text):
+def strip_own_footers(text):
     """Drop our own footers from text quoted back at us.
 
     A thread accumulates one copy per round: the footer the gate appended to
@@ -143,7 +143,7 @@ def source_text(message):
         text = converter.handle(part.get_content())
     else:
         text = part.get_content()
-    return _strip_own_footers(_unwrap_safelinks(text))
+    return strip_own_footers(unwrap_safelinks(text))
 
 
 def compose(sender, recipients, subject, text, *, cc=()):
