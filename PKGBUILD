@@ -6,7 +6,7 @@ pkgdesc='Email drafting and gated sending over the mddb card substrate'
 arch=('any')
 url='https://github.com/handley-lab/mddraft'
 license=('MIT')
-depends=('python' 'python-mddb>=0.0.26')
+depends=('python' 'python-mddb>=0.0.26' 'python-html2text')
 
 package() {
   cd "$startdir"

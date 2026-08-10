@@ -2,6 +2,8 @@
 
 from email.utils import formataddr, getaddresses
 
+import html2text
+
 
 def _addresses(values):
     return [(addr.casefold(), formataddr((name, addr))) for name, addr in getaddresses(values)]
@@ -22,6 +24,26 @@ def _body(*sections):
     return "\n\n".join(section.rstrip("\n") for section in sections if section) + "\n"
 
 
+def source_text(message):
+    """Return the quotable text of ``message``.
+
+    A ``text/plain`` part is quoted verbatim. HTML-only mail — most Outlook
+    correspondence — is rendered to Markdown rather than quoted as markup: a
+    reply carrying a Word document's ``<!--[if !mso]>`` preamble is unreadable
+    to the recipient and unreviewable in the approval surface. Links survive
+    the rendering as ``[text](url)`` because they are frequently the load-
+    bearing content of the quoted mail. Paragraphs are left unwrapped so the
+    wire carries them as the sender wrote them.
+    """
+    part = message.get_body(preferencelist=("plain", "html"))
+    if part.get_content_type() != "text/html":
+        return part.get_content()
+    converter = html2text.HTML2Text()
+    converter.body_width = 0
+    converter.ignore_images = True
+    return converter.handle(part.get_content())
+
+
 def compose(sender, recipients, subject, text, *, cc=()):
     """Return ``(envelope, body)`` for a fresh composition."""
     envelope = {
@@ -36,9 +58,7 @@ def compose(sender, recipients, subject, text, *, cc=()):
     return envelope, _body(text)
 
 
-def reply(
-    message, source_text, sender, text, *, reply_all=False, own_addresses=()
-):
+def reply(message, sender, text, *, reply_all=False, own_addresses=()):
     """Return ``(envelope, body)`` for a reply to ``message``."""
     target = message.get_all("Reply-To") or message.get_all("From", [])
     excluded = {sender.casefold(), *(address.casefold() for address in own_addresses)}
@@ -75,19 +95,19 @@ def reply(
     }
     if cc:
         envelope["cc"] = cc
-    quoted = "\n".join("> " + line for line in source_text.rstrip("\n").split("\n"))
+    quoted = "\n".join("> " + line for line in source_text(message).rstrip("\n").split("\n"))
     attribution = f"On {message['Date']}, {message['From']} wrote:"
     return envelope, _body(text, attribution + "\n" + quoted)
 
 
-def forward(message, source_text, sender, text, *, recipients=()):
+def forward(message, sender, text, *, recipients=()):
     """Return ``(envelope, body)`` for an inline Mutt-shaped forward."""
     intro = f"----- Forwarded message from {message['From']} -----"
     headers = []
     for name in ("Date", "From", "To", "Cc", "Subject"):
         if message[name] is not None:
             headers.append(message.policy.fold(name, message[name]).rstrip("\n"))
-    forwarded = _body(intro, "\n".join(headers), source_text)
+    forwarded = _body(intro, "\n".join(headers), source_text(message))
     trailer = "----- End forwarded message -----"
     envelope = {
         "kind": "draft",

@@ -16,7 +16,7 @@ from mddraft._core import (
     flush,
     reconcile,
 )
-from mddraft._correspondence import compose, forward, reply
+from mddraft._correspondence import compose, forward, reply, source_text
 
 __version__ = "0.0.12"
 __all__ = [
@@ -31,4 +31,5 @@ __all__ = [
     "compose",
     "forward",
     "reply",
+    "source_text",
 ]
