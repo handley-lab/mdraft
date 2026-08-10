@@ -208,3 +208,128 @@ def test_plain_part_is_preferred_over_html_alternative():
         "--b\nContent-Type: text/html\n\n<p>the html part</p>\n--b--",
     )
     assert "> the plain part" in mddraft.reply(source, "me@example.org", "y")[1]
+
+
+def test_safelinks_wrapper_is_unwound_to_the_real_url():
+    source = message(
+        "Date: Fri, 07 Aug 2026 15:36:31 +0100\n"
+        "From: IoA human resources <hr@ast.cam.ac.uk>\n"
+        "Subject: Bursary application\n"
+        "Message-ID: <bursary@outlook.example>",
+        "The form is here: https://eur03.safelinks.protection.outlook.com/?url="
+        "https%3A%2F%2Fexample.sharepoint.com%2Fbursary.pdf&data=05%7C02%7Cwh260"
+        "%40cam.ac.uk%7C55d9d485a54d415f&sdata=bnRBb0JrUWM5NlREWitUUEhx",
+    )
+    _, body = mddraft.reply(source, "wh260@cam.ac.uk", "Thanks.")
+    assert "> The form is here: https://example.sharepoint.com/bursary.pdf" in body
+    assert "safelinks" not in body
+
+
+def test_our_own_footer_is_stripped_at_every_occurrence(monkeypatch, tmp_path):
+    footers = tmp_path / "footers"
+    footers.mkdir()
+    (footers / "wh260@cam.ac.uk").write_text(
+        "\nDr Will Handley\nRoyal Society University Research Fellow\n"
+        "Institute of Astronomy\nUniversity of Cambridge\n"
+    )
+    monkeypatch.setattr(mddraft._core, "FOOTERS_DIR", footers)
+    source = message(
+        "Date: Tue, 21 Jul 2026 15:49:23 +0100\n"
+        "From: William Royce <wr286@cam.ac.uk>\n"
+        "Subject: Re: The post\n"
+        "Message-ID: <royce@outlook.example>",
+        "Thank you for coming back to me.\n"
+        "\n"
+        "-- \n"
+        "\n"
+        "Dr Will Handley\n"
+        "Royal Society University Research Fellow\n"
+        "Institute of Astronomy\n"
+        "University of Cambridge\n"
+        "\n"
+        "> Best wishes,\n"
+        "> \n"
+        "> William\n"
+        "> \n"
+        "> \\--  \n"
+        ">   \n"
+        "> Dr Will Handley  \n"
+        "> Royal Society University Research Fellow  \n"
+        "> Institute of Astronomy  \n"
+        "> University of Cambridge  \n",
+    )
+    _, body = mddraft.reply(source, "wh260@cam.ac.uk", "Noted.")
+    assert "Royal Society University Research Fellow" not in body
+    assert "> Thank you for coming back to me." in body
+    assert "> > William" in body
+
+
+def test_a_correspondents_own_signature_is_left_alone(monkeypatch, tmp_path):
+    footers = tmp_path / "footers"
+    footers.mkdir()
+    (footers / "wh260@cam.ac.uk").write_text("\nDr Will Handley\nInstitute of Astronomy\n")
+    monkeypatch.setattr(mddraft._core, "FOOTERS_DIR", footers)
+    source = message(
+        "Date: Fri, 07 Aug 2026 12:31:24 +0100\n"
+        "From: Helen Thirkettle <hr@ast.cam.ac.uk>\n"
+        "Subject: Visa costs\n"
+        "Message-ID: <helen@outlook.example>",
+        "Is there any leeway here?\n\n-- \n\nHelen Thirkettle\nSenior HR Coordinator\n",
+    )
+    _, body = mddraft.reply(source, "wh260@cam.ac.uk", "Yes.")
+    assert "> Helen Thirkettle" in body
+    assert "> Senior HR Coordinator" in body
+
+
+def test_the_longest_matching_identity_footer_wins(monkeypatch, tmp_path):
+    """Identities share opening lines; the shortest must not orphan the rest."""
+    footers = tmp_path / "footers"
+    footers.mkdir()
+    (footers / "a@example.org").write_text("\nDr Will Handley\nInstitute of Astronomy\n")
+    (footers / "wh260@cam.ac.uk").write_text(
+        "\nDr Will Handley\nInstitute of Astronomy\nPhone: +44-(0)7718-622713\n"
+        "Website: https://www.handley-lab.co.uk\n"
+    )
+    monkeypatch.setattr(mddraft._core, "FOOTERS_DIR", footers)
+    source = message(
+        "Date: Tue, 21 Jul 2026 15:49:23 +0100\n"
+        "From: A <a@example.org>\n"
+        "Subject: Re: Topic\n"
+        "Message-ID: <shared@example.org>",
+        "Noted, thanks.\n"
+        "\n"
+        "> -- \n"
+        "> \n"
+        "> Dr Will Handley  \n"
+        "> Institute of Astronomy  \n"
+        "> Phone: +44-(0)7718-622713  \n"
+        "> Website: [ https://www.handley-lab.co.uk](https://www.handley-lab.co.uk/)  \n",
+    )
+    _, body = mddraft.reply(source, "wh260@cam.ac.uk", "Right.")
+    assert "handley-lab.co.uk" not in body
+    assert "Phone" not in body
+    assert "> Noted, thanks." in body
+
+
+def test_a_footer_reflowed_onto_one_line_is_still_ours(monkeypatch, tmp_path):
+    """Outlook flattens the address block; the words are the same footer."""
+    footers = tmp_path / "footers"
+    footers.mkdir()
+    (footers / "wh260@cam.ac.uk").write_text(
+        "\nDr Will Handley\nRoyal Society University Research Fellow\n"
+        "Institute of Astronomy\nUniversity of Cambridge\n"
+    )
+    monkeypatch.setattr(mddraft._core, "FOOTERS_DIR", footers)
+    source = message(
+        "Date: Mon, 22 Jun 2026 12:38:00 +0100\n"
+        "From: IoA human resources <hr@ast.cam.ac.uk>\n"
+        "Subject: RE: Contract\n"
+        "Message-ID: <reflow@outlook.example>",
+        "Thanks for confirming.\n"
+        "\n"
+        "> > Dr Will Handley Royal Society University Research Fellow\n"
+        "> > Institute of Astronomy University of Cambridge\n",
+    )
+    _, body = mddraft.reply(source, "wh260@cam.ac.uk", "Noted.")
+    assert "Royal Society" not in body
+    assert "> Thanks for confirming." in body
