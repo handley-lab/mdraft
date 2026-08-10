@@ -16,9 +16,16 @@ from mddraft._core import (
     flush,
     reconcile,
 )
-from mddraft._correspondence import compose, forward, reply, source_text
+from mddraft._correspondence import (
+    compose,
+    forward,
+    reply,
+    source_text,
+    strip_own_footers,
+    unwrap_safelinks,
+)
 
-__version__ = "0.0.14"
+__version__ = "0.0.15"
 __all__ = [
     "ENVELOPE_DOC",
     "AlreadySent",
@@ -32,4 +39,6 @@ __all__ = [
     "forward",
     "reply",
     "source_text",
+    "strip_own_footers",
+    "unwrap_safelinks",
 ]
