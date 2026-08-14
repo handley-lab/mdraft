@@ -36,6 +36,7 @@ constructs the calls; render() raises KeyError on missing required keys):
                          Outbox renders); neither is ever flushed
   to: [addr, ...]        required at flush
   cc: [addr, ...]        optional
+  bcc: [addr, ...]       optional
   from: <address>        required — must equal an msmtp account name; selects
                          the sending identity (msmtp -a <from>)
   subject: <text>        required
@@ -50,8 +51,11 @@ constructs the calls; render() raises KeyError on missing required keys):
   sent_mid / sent_sha / sent_at   stamped by flush() and only meaningful when
                          flush stamped them
 
-bcc is deliberately absent from v1: envelope-vs-header semantics with
-``msmtp -t`` are a trap, deferred until actually needed.
+The card owns the envelope: flush() hands to + cc + bcc to msmtp as explicit
+recipient arguments, and the headers carry only what the recipients may read.
+A Bcc header is therefore never rendered, so bcc cannot be disclosed by a
+transport that is configured to pass Bcc headers through, and the bytes
+mddraft materialises and digests are the bytes on the wire.
 
 Body = the plain-text email body, one unwrapped line per paragraph — the
 wire carries it verbatim (quoted-printable) and clients wrap to their own
@@ -169,7 +173,8 @@ def render(card, mid="", attachment_data=(), realname=""):
         mid: Message-ID to stamp, when the message is actually being sent.
 
     Returns:
-        An email.message.EmailMessage ready for msmtp -t.
+        An email.message.EmailMessage carrying the headers the recipients
+        read; the envelope recipients come from the card, not from these.
     """
     msg = EmailMessage()
     sender = card.yaml["from"]
@@ -321,6 +326,11 @@ def flush(
         attachments(deck, card, sha),
         realname=realname,
     )
+    recipients = [
+        *card.yaml["to"],
+        *card.yaml.get("cc", []),
+        *card.yaml.get("bcc", []),
+    ]
     msg["Date"] = datetime.now(timezone.utc)
     payload = _sign(msg, signer) if signer else bytes(msg)
     digest = hashlib.sha256(payload).hexdigest()
@@ -340,7 +350,7 @@ def flush(
     if before_transport:
         before_transport(payload)
     subprocess.run(
-        [*msmtp, "-a", sender, "-t"],
+        [*msmtp, "-a", sender, "--", *recipients],
         input=payload,
         stderr=subprocess.PIPE,
         check=True,

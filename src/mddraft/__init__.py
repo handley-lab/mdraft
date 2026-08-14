@@ -25,7 +25,7 @@ from mddraft._correspondence import (
     unwrap_safelinks,
 )
 
-__version__ = "0.0.15"
+__version__ = "0.0.16"
 __all__ = [
     "ENVELOPE_DOC",
     "AlreadySent",

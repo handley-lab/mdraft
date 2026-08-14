@@ -432,7 +432,7 @@ def test_flush_sends_and_stamps(deck, fake_msmtp):
     sha = db.head()
     mid = mddraft.flush(db.root, card_id, sha, msmtp=(str(script),))
     wire = log.read_text()
-    assert "CALL -a wh260@cam.ac.uk -t" in wire
+    assert "CALL -a wh260@cam.ac.uk -- smith@example.org jones@example.org" in wire
     assert "Dear Smith," in wire
     assert mid in wire
     stamped = mddb.MDDB(db.root).read(card_id)
@@ -440,6 +440,33 @@ def test_flush_sends_and_stamps(deck, fake_msmtp):
     assert stamped.yaml["sent_mid"] == mid
     assert stamped.yaml["sent_sha"] == sha
     assert "sent_at" in stamped.yaml
+
+
+def test_flush_addresses_bcc_and_leaves_it_out_of_the_headers(deck, fake_msmtp):
+    db, card_id = deck
+    script, log = fake_msmtp
+    card = db.read(card_id)
+    card.yaml["bcc"] = ["ghost@example.org"]
+    with db.editor(rationale="bcc the archive") as editor:
+        editor.update(card, summary=card.summary)
+    mddraft.flush(db.root, card_id, db.head(), msmtp=(str(script),))
+    wire = log.read_text()
+    assert (
+        "CALL -a wh260@cam.ac.uk -- "
+        "smith@example.org jones@example.org ghost@example.org\n" in wire
+    )
+    payload = wire_message(log)
+    assert b"ghost@example.org" not in payload
+    assert b"Bcc" not in payload
+
+
+def test_flush_without_bcc_addresses_only_to_and_cc(deck, fake_msmtp):
+    db, card_id = deck
+    script, log = fake_msmtp
+    mddraft.flush(db.root, card_id, db.head(), msmtp=(str(script),))
+    wire = log.read_text()
+    assert "CALL -a wh260@cam.ac.uk -- smith@example.org jones@example.org\n" in wire
+    assert b"Bcc" not in wire_message(log)
 
 
 def test_flush_sends_the_approved_sha_not_head(deck, fake_msmtp):
