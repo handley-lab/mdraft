@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install "mddb @ git+https://github.com/handley-lab/mddb.git@4a9e03638d877e663eae3702827a9a0a31bf9788"
+      - run: pip install "mddb @ git+https://github.com/handley-lab/mddb.git@39d28ca91372bcdc2c6ac1b76a23276ee6c49fe4"
       - run: pip install -e ".[dev]" build twine
       - run: scripts/check
         env:
