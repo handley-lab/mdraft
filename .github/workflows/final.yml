@@ -21,6 +21,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-      - run: pip install "mddb @ git+https://github.com/handley-lab/mddb.git@master"
+      - run: pip install "mddb @ git+https://github.com/handley-lab/mddb.git@4a9e03638d877e663eae3702827a9a0a31bf9788"
       - run: pip install -e ".[dev]" build twine
       - run: scripts/check
+        env:
+          GIT_AUTHOR_NAME: GitHub Actions
+          GIT_AUTHOR_EMAIL: actions@github.com
+          GIT_COMMITTER_NAME: GitHub Actions
+          GIT_COMMITTER_EMAIL: actions@github.com

@@ -1,6 +1,7 @@
 """Pure reply and forward construction from parsed mail."""
 
 import re
+from email._header_value_parser import get_msg_id
 from email.utils import formataddr, getaddresses
 from urllib.parse import unquote
 
@@ -26,7 +27,12 @@ def _subject(subject, prefix):
 def _message_ids(header):
     if header is None:
         return []
-    return [part.value.strip() for part in header._parse_tree if part.token_type == "msg-id"]
+    value = str(header)
+    message_ids = []
+    while value:
+        message_id, value = get_msg_id(value)
+        message_ids.append(message_id.value.strip())
+    return message_ids
 
 
 def _body(*sections):
